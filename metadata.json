@@ -1,0 +1,6 @@
+{
+  "name": "VayuGuard — Urban Air Quality & Low-Emission Assistant",
+  "description": "Real-time urban air quality telemetry, thermal inversion detection, and personalized low-emission household action plans powered by Open-Meteo and Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

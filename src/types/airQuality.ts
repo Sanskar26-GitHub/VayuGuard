@@ -1,0 +1,137 @@
+export type AirQualityCategory =
+  | 'Good'
+  | 'Moderate'
+  | 'Unhealthy for Sensitive Groups'
+  | 'Unhealthy'
+  | 'Very Unhealthy'
+  | 'Hazardous';
+
+export type VentilationType =
+  | 'cross_ventilation'
+  | 'single_sided'
+  | 'sealed_ac'
+  | 'natural_open';
+
+export type CookingFuel =
+  | 'lpg'
+  | 'electric_induction'
+  | 'piped_gas'
+  | 'biomass_solid';
+
+export type CommuteMode =
+  | 'car_solo'
+  | 'two_wheeler'
+  | 'metro_bus'
+  | 'cycle_walk'
+  | 'work_from_home';
+
+export type SensitiveGroup =
+  | 'children'
+  | 'seniors'
+  | 'asthma_respiratory'
+  | 'pregnant'
+  | 'outdoor_worker';
+
+export type CostTier = 'Free' | 'Low Cost' | 'Equipment';
+
+export type EffortLevel = '2-Min Habit' | 'Daily Routine' | 'One-Time Setup';
+
+export type PillarId =
+  | 'low_emission_routines'
+  | 'iaq_hacks'
+  | 'sustainable_alternatives';
+
+export type TelemetrySource = 'open-meteo-live' | 'meteorological-baseline';
+
+export interface AirTelemetry {
+  city: string;
+  resolvedLocation: string;
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+  usAqi: number;
+  category: AirQualityCategory;
+  pm25: number;
+  pm10: number;
+  no2: number;
+  co: number;
+  temperatureC: number;
+  humidityPercent: number;
+  windSpeedKmh: number;
+  thermalInversionRisk: boolean;
+  inversionReason: string;
+  recommendedVentilationWindow: string;
+  source: TelemetrySource;
+}
+
+export interface HouseholdProfile {
+  city: string;
+  ventilationType: VentilationType;
+  hasAirPurifier: boolean;
+  cookingFuel: CookingFuel;
+  commuteMode: CommuteMode;
+  sensitiveGroups: SensitiveGroup[];
+  lifestyleNotes?: string;
+}
+
+export interface WhyAndDirectImpact {
+  mechanism: string;
+  pm25ReductionPercent: number;
+  co2SavedKgPerDay: number;
+  costTier: CostTier;
+  effortLevel: EffortLevel;
+  groundedMetricRef: string;
+}
+
+export interface RecommendationCardData {
+  id: string;
+  pillar: PillarId;
+  pillarLabel: string;
+  title: string;
+  actionSummary: string;
+  whyAndDirectImpact: WhyAndDirectImpact;
+  groundingAdjusted?: boolean;
+  adjustmentNote?: string;
+}
+
+export interface ActionPlanResponse {
+  telemetry: AirTelemetry;
+  dailyBriefing: string;
+  ventilationGuidance: string;
+  recommendations: RecommendationCardData[];
+  metadata: {
+    modelUsed: string;
+    cached: boolean;
+    fallbackTriggered: boolean;
+    generatedAt: string;
+    groundingAdjustmentsCount: number;
+  };
+}
+
+export interface AskAssistantRequest {
+  question: string;
+  profile: HouseholdProfile;
+  telemetry?: AirTelemetry;
+}
+
+export interface AskAssistantResponse {
+  answer: string;
+  groundedMetricsUsed: string[];
+  cautionNote: string;
+  modelUsed: string;
+  fallbackTriggered: boolean;
+}
+
+export interface CommunityImpactSummary {
+  adoptedCount: number;
+  totalRecommendations: number;
+  householdScale: number;
+  dailyCo2SavedPerHouseholdKg: number;
+  monthlyCo2SavedPerHouseholdKg: number;
+  monthlyCommunityCo2SavedKg: number;
+  annualCommunityCo2SavedTonnes: number;
+  combinedIndoorPm25ReductionPercent: number;
+  estimatedIndoorPm25AfterAction: number;
+  baselineIndoorPm25: number;
+  treesEquivalentPerMonth: number;
+}

@@ -1,0 +1,206 @@
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import type {
+  ActionPlanResponse,
+  AskAssistantResponse,
+  RecommendationCardData,
+} from '../../src/types/airQuality';
+import {
+  generateContentWithRetryAndFallback,
+  getLastAiDiagnostic,
+  isGeminiConfigured,
+  sanitizeGeminiError,
+} from '../config/gemini';
+import {
+  ACTION_PLAN_RESPONSE_SCHEMA,
+  ASK_ASSISTANT_RESPONSE_SCHEMA,
+  ASK_SYSTEM_INSTRUCTION,
+  buildAskPrompt,
+  buildPlanPrompt,
+  PLAN_SYSTEM_INSTRUCTION,
+} from '../prompts/airQualityPrompt';
+import { hashNormalizedPayload, planResponseCache } from '../services/cacheService';
+import {
+  generateFallbackAssistantAnswer,
+  generateParametricFallbackPlan,
+} from '../services/fallbackPlanService';
+import { verifyAndGroundRecommendations } from '../services/groundingService';
+import {
+  sanitizeProfile,
+  sanitizeQuestion,
+  ValidationError,
+} from '../services/sanitizationService';
+import { fetchAirAndWeatherTelemetry } from '../services/weatherAirService';
+
+export const apiRouter = Router();
+
+apiRouter.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'vayuguard-api',
+    geminiConfigured: isGeminiConfigured(),
+    lastAiDiagnostic: getLastAiDiagnostic(),
+    cache: planResponseCache.getStats(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+apiRouter.get('/air-quality', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rawCity = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+    if (rawCity.length < 2) {
+      throw new ValidationError('Query parameter "city" must be at least 2 characters.');
+    }
+    const telemetry = await fetchAirAndWeatherTelemetry(rawCity.slice(0, 80));
+    res.json({ telemetry });
+  } catch (err) {
+    next(err);
+  }
+});
+
+apiRouter.post('/plan', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const profile = sanitizeProfile(req.body);
+    const telemetry = await fetchAirAndWeatherTelemetry(profile.city);
+
+    // Include city, profile, and rounded telemetry bucket in cache key so changing AQI invalidates stale plans
+    const cacheKey = hashNormalizedPayload({
+      profile,
+      aqiBucket: Math.round(telemetry.usAqi / 10) * 10,
+      inversion: telemetry.thermalInversionRisk,
+      source: telemetry.source,
+    });
+
+    const cached = planResponseCache.get(cacheKey) as ActionPlanResponse | undefined;
+    if (cached) {
+      res.json({
+        ...cached,
+        telemetry,
+        metadata: {
+          ...cached.metadata,
+          cached: true,
+        },
+      });
+      return;
+    }
+
+    let dailyBriefing = '';
+    let ventilationGuidance = telemetry.recommendedVentilationWindow;
+    let rawRecommendations: RecommendationCardData[] = [];
+    let modelUsed = 'parametric-meteorological-fallback';
+    let fallbackTriggered = false;
+
+    if (isGeminiConfigured()) {
+      try {
+        const prompt = buildPlanPrompt(profile, telemetry);
+        const aiResult = await generateContentWithRetryAndFallback({
+          contents: prompt,
+          systemInstruction: PLAN_SYSTEM_INSTRUCTION,
+          responseSchema: ACTION_PLAN_RESPONSE_SCHEMA,
+        });
+
+        const parsed = JSON.parse(aiResult.text) as {
+          dailyBriefing?: string;
+          ventilationGuidance?: string;
+          recommendations?: RecommendationCardData[];
+        };
+
+        if (
+          parsed &&
+          typeof parsed.dailyBriefing === 'string' &&
+          Array.isArray(parsed.recommendations) &&
+          parsed.recommendations.length > 0
+        ) {
+          dailyBriefing = parsed.dailyBriefing;
+          ventilationGuidance =
+            typeof parsed.ventilationGuidance === 'string' && parsed.ventilationGuidance.trim()
+              ? parsed.ventilationGuidance
+              : telemetry.recommendedVentilationWindow;
+          rawRecommendations = parsed.recommendations;
+          modelUsed = aiResult.modelUsed;
+        } else {
+          throw new Error('Malformed structured JSON plan from Gemini');
+        }
+      } catch (aiErr) {
+        console.warn('[VayuGuard] Gemini plan generation fell back:', sanitizeGeminiError(aiErr));
+        const fallback = generateParametricFallbackPlan(profile, telemetry);
+        dailyBriefing = fallback.dailyBriefing;
+        ventilationGuidance = fallback.ventilationGuidance;
+        rawRecommendations = fallback.recommendations;
+        fallbackTriggered = true;
+      }
+    } else {
+      const fallback = generateParametricFallbackPlan(profile, telemetry);
+      dailyBriefing = fallback.dailyBriefing;
+      ventilationGuidance = fallback.ventilationGuidance;
+      rawRecommendations = fallback.recommendations;
+      fallbackTriggered = true;
+    }
+
+    const { recommendations, adjustmentsCount } = verifyAndGroundRecommendations(
+      rawRecommendations,
+      telemetry,
+    );
+
+    const responsePayload: ActionPlanResponse = {
+      telemetry,
+      dailyBriefing,
+      ventilationGuidance,
+      recommendations,
+      metadata: {
+        modelUsed,
+        cached: false,
+        fallbackTriggered,
+        generatedAt: new Date().toISOString(),
+        groundingAdjustmentsCount: adjustmentsCount,
+      },
+    };
+
+    planResponseCache.set(cacheKey, responsePayload);
+    res.json(responsePayload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+apiRouter.post('/ask', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const question = sanitizeQuestion(body.question);
+    const profile = sanitizeProfile(body.profile);
+    const telemetry = await fetchAirAndWeatherTelemetry(profile.city);
+
+    if (isGeminiConfigured()) {
+      try {
+        const prompt = buildAskPrompt(question, profile, telemetry);
+        const aiResult = await generateContentWithRetryAndFallback({
+          contents: prompt,
+          systemInstruction: ASK_SYSTEM_INSTRUCTION,
+          responseSchema: ASK_ASSISTANT_RESPONSE_SCHEMA,
+        });
+
+        const parsed = JSON.parse(aiResult.text) as Partial<AskAssistantResponse>;
+        if (typeof parsed.answer === 'string' && parsed.answer.trim().length > 0) {
+          res.json({
+            answer: parsed.answer.trim(),
+            groundedMetricsUsed: Array.isArray(parsed.groundedMetricsUsed)
+              ? parsed.groundedMetricsUsed.slice(0, 6)
+              : [`US AQI ${telemetry.usAqi}`, `PM2.5 ${telemetry.pm25} µg/m³`],
+            cautionNote:
+              typeof parsed.cautionNote === 'string' && parsed.cautionNote.trim().length > 0
+                ? parsed.cautionNote.trim()
+                : 'Environmental guidance is informational; seek medical advice for acute respiratory symptoms.',
+            modelUsed: aiResult.modelUsed,
+            fallbackTriggered: false,
+          } satisfies AskAssistantResponse);
+          return;
+        }
+      } catch (aiErr) {
+        console.warn('[VayuGuard] Gemini Q&A fell back:', sanitizeGeminiError(aiErr));
+      }
+    }
+
+    res.json(generateFallbackAssistantAnswer(question, profile, telemetry));
+  } catch (err) {
+    next(err);
+  }
+});
