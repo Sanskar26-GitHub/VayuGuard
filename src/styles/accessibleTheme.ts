@@ -1,4 +1,4 @@
-import type { AirQualityCategory } from '../types/airQuality';
+import type { AirQualityCategory, SeverityTier } from '../types/airQuality';
 
 /**
  * Centralized WCAG 2.1 AA/AAA color palette tokens for VayuGuard.
@@ -136,6 +136,25 @@ export const AQI_ACCESSIBLE_TOKENS: Record<AirQualityCategory, AccessibleColorTo
     wcagLevel: 'AAA',
     label: 'Hazardous air quality (301+ US AQI)',
   },
+};
+
+/**
+ * Maps unified regional severity tiers (1..6) across all 5 regional AQI scales
+ * (IN_CPCB, US_EPA, CN_MEE, UK_DAQI, EU_EAQI) to WCAG 2.1 AA/AAA color tokens.
+ */
+export const SEVERITY_TIER_TOKENS: Record<SeverityTier, AccessibleColorToken> = {
+  /** Tier 1 (Good / Excellent / Low): Deep Forest Emerald (#065F46) on Soft Mint (#ECFDF5) — contrast ratio 7.28:1 (WCAG AAA). */
+  1: AQI_ACCESSIBLE_TOKENS.Good,
+  /** Tier 2 (Satisfactory / Moderate / Fair): Deep Ochre (#78350F) on Pale Straw (#FEFCE8) — contrast ratio 9.65:1 (WCAG AAA). */
+  2: AQI_ACCESSIBLE_TOKENS.Moderate,
+  /** Tier 3 (USG / Moderately Polluted / Lightly Polluted / UK Moderate): Burnt Amber (#9A3412) on Warm Cream (#FFF7ED) — contrast ratio 6.53:1 (WCAG AA). */
+  3: AQI_ACCESSIBLE_TOKENS['Unhealthy for Sensitive Groups'],
+  /** Tier 4 (Unhealthy / Poor / CN Moderately Polluted): Deep Crimson (#991B1B) on Pale Rose (#FEF2F2) — contrast ratio 7.11:1 (WCAG AAA). */
+  4: AQI_ACCESSIBLE_TOKENS.Unhealthy,
+  /** Tier 5 (Very Unhealthy / Very Poor / Heavily Polluted / High): Deep Indigo-Violet (#5B21B6) on Soft Lavender (#F5F3FF) — contrast ratio 7.75:1 (WCAG AAA). */
+  5: AQI_ACCESSIBLE_TOKENS['Very Unhealthy'],
+  /** Tier 6 (Hazardous / Severe / Severely Polluted / Very High / Extremely Poor): Deep Plum (#701A75) on Pale Orchid (#FAE8FF) — contrast ratio 8.56:1 (WCAG AAA). */
+  6: AQI_ACCESSIBLE_TOKENS.Hazardous,
 };
 
 export const STATUS_ACCESSIBLE_TOKENS = {

@@ -76,7 +76,11 @@ export function AskAssistantPanel({ profile, telemetry }: AskAssistantPanelProps
             Ask the Air Assistant
           </h2>
           <p className="text-sm text-slate-600">
-            Get situational advice grounded in {telemetry ? `${telemetry.city}'s live US AQI (${telemetry.usAqi})` : 'your city telemetry'} and household profile.
+            Get situational advice grounded in{' '}
+            {telemetry
+              ? `${telemetry.resolvedLocation}'s ${telemetry.scaleName} (${telemetry.aqiValue}/${telemetry.scaleMax} · ${telemetry.categoryLabel})`
+              : 'your city telemetry'}{' '}
+            and household profile.
           </p>
         </div>
       </div>

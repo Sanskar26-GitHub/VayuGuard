@@ -6,6 +6,12 @@ export type AirQualityCategory =
   | 'Very Unhealthy'
   | 'Hazardous';
 
+export type RegionalScaleCode = 'IN_CPCB' | 'US_EPA' | 'CN_MEE' | 'UK_DAQI' | 'EU_EAQI';
+
+export type ScaleOverride = 'AUTO' | RegionalScaleCode;
+
+export type SeverityTier = 1 | 2 | 3 | 4 | 5 | 6;
+
 export type VentilationType =
   | 'cross_ventilation'
   | 'single_sided'
@@ -42,19 +48,52 @@ export type PillarId =
   | 'sustainable_alternatives';
 
 export type TelemetrySource = 'open-meteo-live' | 'meteorological-baseline';
+export type TelemetryStatus = 'live' | 'offline-baseline';
 
-export interface AirTelemetry {
-  city: string;
-  resolvedLocation: string;
-  latitude: number;
-  longitude: number;
-  timestamp: string;
-  usAqi: number;
-  category: AirQualityCategory;
+export interface RawPollutants {
   pm25: number;
   pm10: number;
   no2: number;
   co: number;
+  o3: number;
+  so2: number;
+}
+
+export interface RegionalAqiResult {
+  aqiValue: number;
+  scaleMax: 500 | 10 | 6;
+  scaleCode: RegionalScaleCode;
+  scaleName: string;
+  categoryLabel: string;
+  severityTier: SeverityTier;
+  dominantPollutant: string;
+  isAutoSelectedScale: boolean;
+}
+
+export interface AirTelemetry {
+  city: string;
+  resolvedLocation: string;
+  countryCode: string;
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+  observedAt: string;
+  usAqi: number;
+  category: AirQualityCategory;
+  aqiValue: number;
+  scaleMax: 500 | 10 | 6;
+  scaleCode: RegionalScaleCode;
+  scaleName: string;
+  categoryLabel: string;
+  severityTier: SeverityTier;
+  dominantPollutant: string;
+  isAutoSelectedScale: boolean;
+  pm25: number;
+  pm10: number;
+  no2: number;
+  co: number;
+  o3: number;
+  so2: number;
   temperatureC: number;
   humidityPercent: number;
   windSpeedKmh: number;
@@ -62,6 +101,7 @@ export interface AirTelemetry {
   inversionReason: string;
   recommendedVentilationWindow: string;
   source: TelemetrySource;
+  telemetrySource: TelemetryStatus;
 }
 
 export interface HouseholdProfile {
@@ -72,6 +112,7 @@ export interface HouseholdProfile {
   commuteMode: CommuteMode;
   sensitiveGroups: SensitiveGroup[];
   lifestyleNotes?: string;
+  scaleOverride?: ScaleOverride;
 }
 
 export interface WhyAndDirectImpact {

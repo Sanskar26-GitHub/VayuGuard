@@ -27,6 +27,7 @@ import { verifyAndGroundRecommendations } from '../services/groundingService';
 import {
   sanitizeProfile,
   sanitizeQuestion,
+  sanitizeScaleOverride,
   ValidationError,
 } from '../services/sanitizationService';
 import { fetchAirAndWeatherTelemetry } from '../services/weatherAirService';
@@ -50,7 +51,8 @@ apiRouter.get('/air-quality', async (req: Request, res: Response, next: NextFunc
     if (rawCity.length < 2) {
       throw new ValidationError('Query parameter "city" must be at least 2 characters.');
     }
-    const telemetry = await fetchAirAndWeatherTelemetry(rawCity.slice(0, 80));
+    const scaleOverride = sanitizeScaleOverride(req.query.scale);
+    const telemetry = await fetchAirAndWeatherTelemetry(rawCity.slice(0, 80), scaleOverride);
     res.json({ telemetry });
   } catch (err) {
     next(err);
@@ -60,12 +62,15 @@ apiRouter.get('/air-quality', async (req: Request, res: Response, next: NextFunc
 apiRouter.post('/plan', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const profile = sanitizeProfile(req.body);
-    const telemetry = await fetchAirAndWeatherTelemetry(profile.city);
+    const telemetry = await fetchAirAndWeatherTelemetry(profile.city, profile.scaleOverride);
 
-    // Include city, profile, and rounded telemetry bucket in cache key so changing AQI invalidates stale plans
+    // Include city, profile, regional scale, and telemetry bucket in cache key
     const cacheKey = hashNormalizedPayload({
       profile,
-      aqiBucket: Math.round(telemetry.usAqi / 10) * 10,
+      scaleCode: telemetry.scaleCode,
+      aqiBucket:
+        telemetry.scaleMax === 500 ? Math.round(telemetry.aqiValue / 10) * 10 : telemetry.aqiValue,
+      categoryLabel: telemetry.categoryLabel,
       inversion: telemetry.thermalInversionRisk,
       source: telemetry.source,
     });
@@ -167,7 +172,7 @@ apiRouter.post('/ask', async (req: Request, res: Response, next: NextFunction) =
     const body = (req.body ?? {}) as Record<string, unknown>;
     const question = sanitizeQuestion(body.question);
     const profile = sanitizeProfile(body.profile);
-    const telemetry = await fetchAirAndWeatherTelemetry(profile.city);
+    const telemetry = await fetchAirAndWeatherTelemetry(profile.city, profile.scaleOverride);
 
     if (isGeminiConfigured()) {
       try {

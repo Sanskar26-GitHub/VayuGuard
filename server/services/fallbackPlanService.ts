@@ -7,11 +7,19 @@ import type {
 
 type AqiBand = 'good' | 'moderate' | 'usg' | 'unhealthy' | 'severe';
 
-export function resolveAqiBand(usAqi: number): AqiBand {
-  if (usAqi <= 50) return 'good';
-  if (usAqi <= 100) return 'moderate';
-  if (usAqi <= 150) return 'usg';
-  if (usAqi <= 200) return 'unhealthy';
+export function resolveAqiBand(severityTierOrAqi: number): AqiBand {
+  // Supports both unified severityTier (1..6) and legacy 0..500 US AQI values
+  if (severityTierOrAqi <= 6) {
+    if (severityTierOrAqi <= 1) return 'good';
+    if (severityTierOrAqi === 2) return 'moderate';
+    if (severityTierOrAqi === 3) return 'usg';
+    if (severityTierOrAqi === 4) return 'unhealthy';
+    return 'severe';
+  }
+  if (severityTierOrAqi <= 50) return 'good';
+  if (severityTierOrAqi <= 100) return 'moderate';
+  if (severityTierOrAqi <= 150) return 'usg';
+  if (severityTierOrAqi <= 200) return 'unhealthy';
   return 'severe';
 }
 
@@ -25,8 +33,8 @@ function describeSensitivities(profile: HouseholdProfile): string {
 /**
  * Dynamic parametric fallback plan generator triggered ONLY if all Gemini retries fail.
  * Computes tailored recommendations across all 3 pillars strictly from the user's live
- * AQI band, thermal inversion status, purifier availability, cooking fuel, commute mode,
- * and household sensitivities—never hardcoded to specific city names.
+ * regional AQI severity tier, thermal inversion status, purifier availability, cooking fuel,
+ * commute mode, and household sensitivities—never hardcoded to specific city names.
  */
 export function generateParametricFallbackPlan(
   profile: HouseholdProfile,
@@ -36,13 +44,14 @@ export function generateParametricFallbackPlan(
   ventilationGuidance: string;
   recommendations: RecommendationCardData[];
 } {
-  const band = resolveAqiBand(telemetry.usAqi);
+  const band = resolveAqiBand(telemetry.severityTier);
   const sensitivityLabel = describeSensitivities(profile);
-  const liveCitation = `Live telemetry in ${telemetry.city}: US AQI ${telemetry.usAqi} (${telemetry.category}), PM2.5 ${telemetry.pm25} µg/m³, NO2 ${telemetry.no2} µg/m³, ${telemetry.temperatureC}°C, wind ${telemetry.windSpeedKmh} km/h.`;
+  const scaleSummary = `${telemetry.scaleName} ${telemetry.aqiValue}/${telemetry.scaleMax} (${telemetry.categoryLabel})`;
+  const liveCitation = `Live telemetry in ${telemetry.city}: ${scaleSummary}, dominant pollutant ${telemetry.dominantPollutant}, PM2.5 ${telemetry.pm25} µg/m³, NO2 ${telemetry.no2} µg/m³, ${telemetry.temperatureC}°C, wind ${telemetry.windSpeedKmh} km/h.`;
 
   const dailyBriefing = telemetry.thermalInversionRisk
-    ? `${telemetry.city} is currently at US AQI ${telemetry.usAqi} (${telemetry.category}) with an active thermal inversion (${telemetry.temperatureC}°C, ${telemetry.windSpeedKmh} km/h wind) trapping PM2.5 (${telemetry.pm25} µg/m³) near street level. Priority protection for ${sensitivityLabel} requires keeping indoor sources near zero and sealing outdoor infiltration.`
-    : `${telemetry.city} shows US AQI ${telemetry.usAqi} (${telemetry.category}) with PM2.5 at ${telemetry.pm25} µg/m³ and ${telemetry.windSpeedKmh} km/h surface wind. Focus on cutting indoor combustion spikes while timing ventilation and travel for ${sensitivityLabel} outside peak pollution hours.`;
+    ? `${telemetry.city} is currently at ${scaleSummary} with an active thermal inversion (${telemetry.temperatureC}°C, ${telemetry.windSpeedKmh} km/h wind) trapping PM2.5 (${telemetry.pm25} µg/m³) near street level. Priority protection for ${sensitivityLabel} requires keeping indoor sources near zero and sealing outdoor infiltration.`
+    : `${telemetry.city} shows ${scaleSummary} with PM2.5 at ${telemetry.pm25} µg/m³ and ${telemetry.windSpeedKmh} km/h surface wind. Focus on cutting indoor combustion spikes while timing ventilation and travel for ${sensitivityLabel} outside peak pollution hours.`;
 
   const ventilationGuidance = telemetry.recommendedVentilationWindow;
 
@@ -150,7 +159,7 @@ export function generateParametricFallbackPlan(
       co2SavedKgPerDay: 0.25,
       costTier: band === 'severe' || band === 'unhealthy' ? 'Low Cost' : 'Free',
       effortLevel: '2-Min Habit',
-      groundedMetricRef: `Wind ${telemetry.windSpeedKmh} km/h, Temp ${telemetry.temperatureC}°C, Inversion Risk: ${telemetry.thermalInversionRisk ? 'Active' : 'Inactive'}, US AQI ${telemetry.usAqi}.`,
+      groundedMetricRef: `Wind ${telemetry.windSpeedKmh} km/h, Temp ${telemetry.temperatureC}°C, Inversion Risk: ${telemetry.thermalInversionRisk ? 'Active' : 'Inactive'}, ${telemetry.scaleName} ${telemetry.aqiValue}/${telemetry.scaleMax}.`,
     },
   });
 
@@ -188,7 +197,7 @@ export function generateParametricFallbackPlan(
       co2SavedKgPerDay: profile.hasAirPurifier ? 0.35 : 0.42,
       costTier: profile.hasAirPurifier ? 'Free' : 'Equipment',
       effortLevel: profile.hasAirPurifier ? '2-Min Habit' : 'One-Time Setup',
-      groundedMetricRef: `Designed to counter outdoor US AQI ${telemetry.usAqi} (PM2.5 ${telemetry.pm25} µg/m³) in ${telemetry.city}.`,
+      groundedMetricRef: `Designed to counter outdoor ${telemetry.scaleName} ${telemetry.aqiValue}/${telemetry.scaleMax} (PM2.5 ${telemetry.pm25} µg/m³) in ${telemetry.city}.`,
     },
   });
 
@@ -244,7 +253,7 @@ export function generateParametricFallbackPlan(
         co2SavedKgPerDay: 0.18,
         costTier: 'Low Cost',
         effortLevel: '2-Min Habit',
-        groundedMetricRef: `Recommended due to ${telemetry.city} US AQI ${telemetry.usAqi} (${telemetry.category}) for ${sensitivityLabel}.`,
+        groundedMetricRef: `Recommended due to ${telemetry.city} ${telemetry.scaleName} ${telemetry.aqiValue}/${telemetry.scaleMax} (${telemetry.categoryLabel}) for ${sensitivityLabel}.`,
       },
     });
   }
@@ -260,12 +269,14 @@ export function generateFallbackAssistantAnswer(
   profile: HouseholdProfile,
   telemetry: AirTelemetry,
 ): AskAssistantResponse {
-  const band = resolveAqiBand(telemetry.usAqi);
+  const band = resolveAqiBand(telemetry.severityTier);
   const qLower = question.toLowerCase();
   const sensitivityLabel = describeSensitivities(profile);
+  const scaleBadge = `${telemetry.scaleName} ${telemetry.aqiValue}/${telemetry.scaleMax} (${telemetry.categoryLabel})`;
 
   const metricsUsed = [
-    `US AQI ${telemetry.usAqi} (${telemetry.category})`,
+    scaleBadge,
+    `Dominant: ${telemetry.dominantPollutant}`,
     `PM2.5 ${telemetry.pm25} µg/m³`,
     `NO2 ${telemetry.no2} µg/m³`,
     `Wind ${telemetry.windSpeedKmh} km/h`,
@@ -274,7 +285,7 @@ export function generateFallbackAssistantAnswer(
 
   let answer: string;
   if (/window|ventilat|open|air out/i.test(qLower)) {
-    answer = `In ${telemetry.city}, current US AQI is ${telemetry.usAqi} (${telemetry.category}) with ${
+    answer = `In ${telemetry.resolvedLocation}, current ${scaleBadge} with ${
       telemetry.thermalInversionRisk ? 'an active thermal inversion' : 'no thermal inversion'
     } (${telemetry.temperatureC}°C, ${telemetry.windSpeedKmh} km/h wind). ${telemetry.recommendedVentilationWindow} With ${profile.ventilationType.replace(
       /_/g,
@@ -283,15 +294,15 @@ export function generateFallbackAssistantAnswer(
   } else if (/run|jog|walk|exercise|outdoor|commute|school|park/i.test(qLower)) {
     answer =
       band === 'good' || band === 'moderate'
-        ? `At US AQI ${telemetry.usAqi} (PM2.5 ${telemetry.pm25} µg/m³) in ${telemetry.city}, light-to-moderate outdoor activity is acceptable—prefer mid-afternoon hours away from traffic corridors where NO2 (${telemetry.no2} µg/m³) spikes.`
-        : `At US AQI ${telemetry.usAqi} (${telemetry.category}) and PM2.5 ${telemetry.pm25} µg/m³ in ${telemetry.city}, avoid vigorous outdoor exercise—especially for ${sensitivityLabel}. Move workouts indoors with filtration, and wear a well-sealed N95/FFP2 respirator for essential trips.`;
+        ? `At ${scaleBadge} (PM2.5 ${telemetry.pm25} µg/m³) in ${telemetry.resolvedLocation}, light-to-moderate outdoor activity is acceptable—prefer mid-afternoon hours away from traffic corridors where NO2 (${telemetry.no2} µg/m³) spikes.`
+        : `At ${scaleBadge} and PM2.5 ${telemetry.pm25} µg/m³ in ${telemetry.resolvedLocation}, avoid vigorous outdoor exercise—especially for ${sensitivityLabel}. Move workouts indoors with filtration, and wear a well-sealed N95/FFP2 respirator for essential trips.`;
   } else if (/cook|kitchen|gas|lpg|smoke|incense/i.test(qLower)) {
     answer = `Since your household uses ${profile.cookingFuel.replace(
       /_/g,
       ' ',
-    )} while outdoor NO2 is ${telemetry.no2} µg/m³ and PM2.5 is ${telemetry.pm25} µg/m³, cover pots with lids, run kitchen exhaust during and 10 minutes after cooking, and eliminate incense or paraffin candles completely.`;
+    )} while outdoor NO2 is ${telemetry.no2} µg/m³ and PM2.5 is ${telemetry.pm25} µg/m³ (${scaleBadge}), cover pots with lids, run kitchen exhaust during and 10 minutes after cooking, and eliminate incense or paraffin candles completely.`;
   } else {
-    answer = `For ${telemetry.city} right now (US AQI ${telemetry.usAqi}, PM2.5 ${telemetry.pm25} µg/m³, wind ${telemetry.windSpeedKmh} km/h): ${telemetry.recommendedVentilationWindow} Prioritize ${
+    answer = `For ${telemetry.resolvedLocation} right now (${scaleBadge}, PM2.5 ${telemetry.pm25} µg/m³, wind ${telemetry.windSpeedKmh} km/h): ${telemetry.recommendedVentilationWindow} Prioritize ${
       profile.hasAirPurifier
         ? 'continuous medium HEPA filtration in sleeping rooms'
         : 'sealing drafts and damp mopping floors'

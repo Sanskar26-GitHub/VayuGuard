@@ -7,15 +7,27 @@ describe('Programmatic Grounding & Bounds Verifier', () => {
   const telemetry: AirTelemetry = {
     city: 'Delhi NCR',
     resolvedLocation: 'Delhi, India',
+    countryCode: 'IN',
     latitude: 28.65,
     longitude: 77.23,
     timestamp: '2026-11-17T08:00',
+    observedAt: '2026-11-17T08:00',
     usAqi: 248,
     category: 'Very Unhealthy',
+    aqiValue: 342,
+    scaleMax: 500,
+    scaleCode: 'IN_CPCB',
+    scaleName: 'India NAQI (CPCB)',
+    categoryLabel: 'Very Poor',
+    severityTier: 5,
+    dominantPollutant: 'PM2.5',
+    isAutoSelectedScale: true,
     pm25: 174.2,
     pm10: 268.5,
     no2: 64.8,
     co: 1120,
+    o3: 42.0,
+    so2: 18.5,
     temperatureC: 13.4,
     humidityPercent: 68,
     windSpeedKmh: 5.2,
@@ -23,6 +35,7 @@ describe('Programmatic Grounding & Bounds Verifier', () => {
     inversionReason: 'Cool calm inversion',
     recommendedVentilationWindow: 'Keep sealed',
     source: 'open-meteo-live',
+    telemetrySource: 'live',
   };
 
   it('clamps hallucinated CO2e savings to [0.05, 15.0] and PM2.5 reduction to [1, 85]', () => {
@@ -54,7 +67,7 @@ describe('Programmatic Grounding & Bounds Verifier', () => {
           co2SavedKgPerDay: 0.001, // Below 0.05
           costTier: 'Free',
           effortLevel: '2-Min Habit',
-          groundedMetricRef: 'Grounded in US AQI 248 and NO2 64.8 µg/m³.',
+          groundedMetricRef: 'Grounded in India NAQI (CPCB) 342/500 and NO2 64.8 µg/m³.',
         },
       },
     ];
@@ -65,7 +78,9 @@ describe('Programmatic Grounding & Bounds Verifier', () => {
     expect(result.recommendations[0].whyAndDirectImpact.pm25ReductionPercent).toBe(85);
     expect(result.recommendations[0].whyAndDirectImpact.co2SavedKgPerDay).toBe(15);
     expect(result.recommendations[0].groundingAdjusted).toBe(true);
-    expect(result.recommendations[0].whyAndDirectImpact.groundedMetricRef).toContain('US AQI 248');
+    expect(result.recommendations[0].whyAndDirectImpact.groundedMetricRef).toContain(
+      'India NAQI (CPCB) 342/500',
+    );
 
     expect(result.recommendations[1].whyAndDirectImpact.pm25ReductionPercent).toBe(1);
     expect(result.recommendations[1].whyAndDirectImpact.co2SavedKgPerDay).toBe(0.05);
@@ -77,15 +92,27 @@ describe('Community Impact Simulator Math', () => {
   const telemetry: AirTelemetry = {
     city: 'Mumbai',
     resolvedLocation: 'Mumbai, India',
+    countryCode: 'IN',
     latitude: 19.07,
     longitude: 72.87,
     timestamp: '2026-11-17T08:00',
+    observedAt: '2026-11-17T08:00',
     usAqi: 120,
     category: 'Unhealthy for Sensitive Groups',
+    aqiValue: 88,
+    scaleMax: 500,
+    scaleCode: 'IN_CPCB',
+    scaleName: 'India NAQI (CPCB)',
+    categoryLabel: 'Satisfactory',
+    severityTier: 2,
+    dominantPollutant: 'PM10',
+    isAutoSelectedScale: true,
     pm25: 45.0,
     pm10: 88.0,
     no2: 46.0,
     co: 580,
+    o3: 49.0,
+    so2: 12.2,
     temperatureC: 27.0,
     humidityPercent: 72,
     windSpeedKmh: 14.0,
@@ -93,6 +120,7 @@ describe('Community Impact Simulator Math', () => {
     inversionReason: 'Dispersion active',
     recommendedVentilationWindow: 'Ventilate midday',
     source: 'open-meteo-live',
+    telemetrySource: 'live',
   };
 
   const sampleRecs: RecommendationCardData[] = [

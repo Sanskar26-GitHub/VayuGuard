@@ -39,6 +39,7 @@ export function clampNumber(value: number, min: number, max: number, decimals = 
 function referencesLiveTelemetry(refText: string, telemetry: AirTelemetry): boolean {
   const lower = refText.toLowerCase();
   const expectedSnippets = [
+    String(telemetry.aqiValue),
     String(telemetry.usAqi),
     String(Math.round(telemetry.pm25)),
     telemetry.pm25.toFixed(1),
@@ -48,7 +49,7 @@ function referencesLiveTelemetry(refText: string, telemetry: AirTelemetry): bool
   ];
 
   const hasMetricKeyword =
-    /\b(aqi|pm2\.5|pm10|no2|co|inversion|wind|temp|humidity|°c|µg\/m³|ug\/m3|km\/h)\b/i.test(
+    /\b(aqi|naqi|daqi|eaqi|pm2\.5|pm10|no2|o3|so2|co|inversion|wind|temp|humidity|°c|µg\/m³|ug\/m3|km\/h)\b/i.test(
       lower,
     );
   const hasActualValue = expectedSnippets.some((snippet) => lower.includes(snippet));
@@ -108,7 +109,7 @@ export function verifyAndGroundRecommendations(
       const inversionTag = telemetry.thermalInversionRisk
         ? `thermal inversion active (${telemetry.temperatureC}°C, wind ${telemetry.windSpeedKmh} km/h)`
         : `wind ${telemetry.windSpeedKmh} km/h at ${telemetry.temperatureC}°C`;
-      groundedMetricRef = `Grounded in ${telemetry.city}: US AQI ${telemetry.usAqi} (${telemetry.category}), PM2.5 ${telemetry.pm25} µg/m³, NO2 ${telemetry.no2} µg/m³, ${inversionTag}.`;
+      groundedMetricRef = `Grounded in ${telemetry.resolvedLocation}: ${telemetry.scaleName} ${telemetry.aqiValue}/${telemetry.scaleMax} (${telemetry.categoryLabel}), PM2.5 ${telemetry.pm25} µg/m³, NO2 ${telemetry.no2} µg/m³, ${inversionTag}.`;
       notes.push('Telemetry citation verified and aligned to live city readings');
     }
 

@@ -9,6 +9,7 @@ import {
   ACCESSIBLE_SURFACES,
   AQI_ACCESSIBLE_TOKENS,
   calculateWcagContrastRatio,
+  SEVERITY_TIER_TOKENS,
   STATUS_ACCESSIBLE_TOKENS,
 } from '../src/styles/accessibleTheme';
 import type { ActionPlanResponse, RecommendationCardData } from '../src/types/airQuality';
@@ -22,15 +23,27 @@ const mockPlanResponse: ActionPlanResponse = {
   telemetry: {
     city: 'Delhi NCR',
     resolvedLocation: 'Delhi, National Capital Territory of Delhi, India',
+    countryCode: 'IN',
     latitude: 28.65,
     longitude: 77.23,
     timestamp: '2026-11-17T08:00',
+    observedAt: '2026-11-17T08:00',
     usAqi: 248,
     category: 'Very Unhealthy',
+    aqiValue: 342,
+    scaleMax: 500,
+    scaleCode: 'IN_CPCB',
+    scaleName: 'India NAQI (CPCB)',
+    categoryLabel: 'Very Poor',
+    severityTier: 5,
+    dominantPollutant: 'PM2.5',
+    isAutoSelectedScale: true,
     pm25: 174.2,
     pm10: 268.5,
     no2: 64.8,
     co: 1120,
+    o3: 42.0,
+    so2: 18.5,
     temperatureC: 13.4,
     humidityPercent: 68,
     windSpeedKmh: 5.2,
@@ -38,6 +51,7 @@ const mockPlanResponse: ActionPlanResponse = {
     inversionReason: 'Cool surface air (< 15°C) with calm winds (< 8 km/h).',
     recommendedVentilationWindow: 'Keep windows sealed; brief midday airing only.',
     source: 'open-meteo-live',
+    telemetrySource: 'live',
   },
   dailyBriefing: 'Thermal inversion is trapping PM2.5 near street level.',
   ventilationGuidance: 'Keep windows sealed during morning and evening peaks.',
@@ -54,7 +68,7 @@ const mockPlanResponse: ActionPlanResponse = {
         co2SavedKgPerDay: 2.1,
         costTier: 'Free',
         effortLevel: 'Daily Routine',
-        groundedMetricRef: 'US AQI 248 and NO2 64.8 µg/m³.',
+        groundedMetricRef: 'India NAQI (CPCB) 342/500 and NO2 64.8 µg/m³.',
       },
     },
     {
@@ -87,6 +101,7 @@ describe('WCAG 2.1 AA/AAA Contrast Token Validation', () => {
     const allTokens = [
       ...Object.values(ACCESSIBLE_SURFACES),
       ...Object.values(AQI_ACCESSIBLE_TOKENS),
+      ...Object.values(SEVERITY_TIER_TOKENS),
       ...Object.values(STATUS_ACCESSIBLE_TOKENS),
     ];
 
@@ -116,7 +131,7 @@ describe('Keyboard Navigation & Semantic Landmarks', () => {
     expect(onToggle).toHaveBeenCalledWith('rec-1');
   });
 
-  it('renders semantic landmarks, skip link, and aria-live announcements in App', async () => {
+  it('renders semantic landmarks, skip link, scale selector, and aria-live announcements in App', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({
@@ -138,7 +153,8 @@ describe('Keyboard Navigation & Semantic Landmarks', () => {
 
     const liveRegions = document.querySelectorAll('[aria-live="polite"]');
     expect(liveRegions.length).toBeGreaterThan(0);
-    expect(liveRegions[0].textContent).toContain('US AQI 248');
+    expect(liveRegions[0].textContent).toContain('India NAQI (CPCB) 342 out of 500');
     expect(screen.getByText(/Thermal Inversion Alert: Trapped Air/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/AQI Scale/i)).toBeInTheDocument();
   });
 });

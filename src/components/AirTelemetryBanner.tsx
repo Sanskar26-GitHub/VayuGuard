@@ -2,25 +2,43 @@ import React from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Clock,
   CloudSun,
   Compass,
   Droplets,
   Gauge,
+  Globe,
   Thermometer,
   Wind,
 } from 'lucide-react';
 import {
-  AQI_ACCESSIBLE_TOKENS,
+  SEVERITY_TIER_TOKENS,
   STATUS_ACCESSIBLE_TOKENS,
 } from '../styles/accessibleTheme';
-import type { AirTelemetry } from '../types/airQuality';
+import type { AirTelemetry, ScaleOverride } from '../types/airQuality';
 
 interface AirTelemetryBannerProps {
   telemetry: AirTelemetry | null;
   isLoading: boolean;
+  scaleOverride?: ScaleOverride;
+  onScaleChange?: (scale: ScaleOverride) => void;
 }
 
-export function AirTelemetryBanner({ telemetry, isLoading }: AirTelemetryBannerProps) {
+const SCALE_OPTIONS: Array<{ value: ScaleOverride; label: string }> = [
+  { value: 'AUTO', label: 'Auto (Local Standard)' },
+  { value: 'IN_CPCB', label: 'India NAQI (CPCB)' },
+  { value: 'US_EPA', label: 'US EPA AQI' },
+  { value: 'CN_MEE', label: 'China MEE AQI' },
+  { value: 'UK_DAQI', label: 'UK DAQI (1–10)' },
+  { value: 'EU_EAQI', label: 'European EAQI (1–6)' },
+];
+
+export function AirTelemetryBanner({
+  telemetry,
+  isLoading,
+  scaleOverride = 'AUTO',
+  onScaleChange,
+}: AirTelemetryBannerProps) {
   if (isLoading && !telemetry) {
     return (
       <section
@@ -44,13 +62,13 @@ export function AirTelemetryBanner({ telemetry, isLoading }: AirTelemetryBannerP
     return null;
   }
 
-  const aqiToken = AQI_ACCESSIBLE_TOKENS[telemetry.category];
+  const severityToken = SEVERITY_TIER_TOKENS[telemetry.severityTier];
   const inversionToken = telemetry.thermalInversionRisk
     ? STATUS_ACCESSIBLE_TOKENS.inversionWarning
     : STATUS_ACCESSIBLE_TOKENS.dispersionClear;
 
-  const isElevatedAqi =
-    telemetry.category !== 'Good' && telemetry.category !== 'Moderate';
+  const isElevatedAqi = telemetry.severityTier >= 3;
+  const isLive = telemetry.telemetrySource === 'live';
 
   return (
     <section
@@ -58,67 +76,112 @@ export function AirTelemetryBanner({ telemetry, isLoading }: AirTelemetryBannerP
       aria-labelledby="telemetry-heading"
       className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6"
     >
-      <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
             <Compass className="h-4 w-4 text-[#0F4C81]" aria-hidden="true" />
-            <span>
-              {telemetry.source === 'open-meteo-live'
-                ? 'Live Open-Meteo Telemetry'
-                : 'Meteorological Baseline Telemetry'}
+            <span className="font-semibold text-slate-800">
+              {isLive ? 'Live Telemetry' : 'Offline Baseline'}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+              <Clock className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+              <span>Observed {telemetry.observedAt}</span>
             </span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">
-              {telemetry.latitude.toFixed(2)}°N, {telemetry.longitude.toFixed(2)}°E
+              {telemetry.latitude.toFixed(2)}°, {telemetry.longitude.toFixed(2)}°
             </span>
           </div>
+
           <h2
             id="telemetry-heading"
             className="mt-1.5 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl"
           >
             {telemetry.resolvedLocation}
           </h2>
+
+          <p className="mt-1 text-xs font-medium text-slate-600">
+            <span>
+              {telemetry.scaleName} · {telemetry.isAutoSelectedScale ? 'Local Standard' : 'Manual Comparison'}
+            </span>
+            <span className="mx-1.5" aria-hidden="true">
+              ·
+            </span>
+            <span>
+              Dominant Pollutant:{' '}
+              <strong className="font-mono text-slate-900">{telemetry.dominantPollutant}</strong>
+            </span>
+          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Status indicator always pairs icon + text label (never hue alone) */}
-          <div
-            className="inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold"
-            style={{
-              backgroundColor: aqiToken.background,
-              borderColor: aqiToken.border,
-              color: aqiToken.foreground,
-            }}
-          >
-            {isElevatedAqi ? (
-              <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-            )}
-            <span className="font-mono tabular-nums">US AQI {telemetry.usAqi}</span>
-            <span aria-hidden="true">·</span>
-            <span>{telemetry.category}</span>
+        <div className="flex flex-col gap-3 sm:items-end">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Status indicator always pairs icon + text label (never hue alone) */}
+            <div
+              className="inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold"
+              style={{
+                backgroundColor: severityToken.background,
+                borderColor: severityToken.border,
+                color: severityToken.foreground,
+              }}
+            >
+              {isElevatedAqi ? (
+                <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+              )}
+              <span className="font-mono tabular-nums">
+                {telemetry.aqiValue} / {telemetry.scaleMax}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>{telemetry.categoryLabel}</span>
+            </div>
+
+            <div
+              className="inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold"
+              style={{
+                backgroundColor: inversionToken.background,
+                borderColor: inversionToken.border,
+                color: inversionToken.foreground,
+              }}
+            >
+              {telemetry.thermalInversionRisk ? (
+                <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <Wind className="h-4 w-4 shrink-0" aria-hidden="true" />
+              )}
+              <span>
+                {telemetry.thermalInversionRisk
+                  ? 'Thermal Inversion Alert: Trapped Air'
+                  : 'Dispersion Active: No Inversion'}
+              </span>
+            </div>
           </div>
 
-          <div
-            className="inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold"
-            style={{
-              backgroundColor: inversionToken.background,
-              borderColor: inversionToken.border,
-              color: inversionToken.foreground,
-            }}
-          >
-            {telemetry.thermalInversionRisk ? (
-              <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-            ) : (
-              <Wind className="h-4 w-4 shrink-0" aria-hidden="true" />
-            )}
-            <span>
-              {telemetry.thermalInversionRisk
-                ? 'Thermal Inversion Alert: Trapped Air'
-                : 'Dispersion Active: No Inversion'}
-            </span>
-          </div>
+          {onScaleChange && (
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="aqi-scale-select"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700"
+              >
+                <Globe className="h-3.5 w-3.5 text-[#0F4C81]" aria-hidden="true" />
+                <span>AQI Scale</span>
+              </label>
+              <select
+                id="aqi-scale-select"
+                value={scaleOverride}
+                onChange={(e) => onScaleChange(e.target.value as ScaleOverride)}
+                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900"
+              >
+                {SCALE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 

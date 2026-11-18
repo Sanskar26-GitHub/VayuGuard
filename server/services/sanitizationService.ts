@@ -2,6 +2,7 @@ import type {
   CommuteMode,
   CookingFuel,
   HouseholdProfile,
+  ScaleOverride,
   SensitiveGroup,
   VentilationType,
 } from '../../src/types/airQuality';
@@ -44,6 +45,21 @@ const VALID_SENSITIVE_GROUPS: ReadonlySet<SensitiveGroup> = new Set([
   'pregnant',
   'outdoor_worker',
 ]);
+
+const VALID_SCALES: ReadonlySet<ScaleOverride> = new Set([
+  'AUTO',
+  'IN_CPCB',
+  'US_EPA',
+  'CN_MEE',
+  'UK_DAQI',
+  'EU_EAQI',
+]);
+
+export function sanitizeScaleOverride(raw: unknown): ScaleOverride {
+  if (typeof raw !== 'string') return 'AUTO';
+  const normalized = raw.trim().toUpperCase() as ScaleOverride;
+  return VALID_SCALES.has(normalized) ? normalized : 'AUTO';
+}
 
 /**
  * Strips ASCII control characters (preserving spaces/tabs/newlines normalized to spaces)
@@ -145,6 +161,8 @@ export function sanitizeProfile(raw: unknown): HouseholdProfile {
       ? truncateText(stripControlChars(candidate.lifestyleNotes), 320)
       : undefined;
 
+  const scaleOverride = sanitizeScaleOverride(candidate.scaleOverride);
+
   return {
     city: cleanCity,
     ventilationType,
@@ -153,6 +171,7 @@ export function sanitizeProfile(raw: unknown): HouseholdProfile {
     commuteMode,
     sensitiveGroups: Array.from(sensitiveSet),
     lifestyleNotes: lifestyleNotes && lifestyleNotes.length > 0 ? lifestyleNotes : undefined,
+    scaleOverride,
   };
 }
 

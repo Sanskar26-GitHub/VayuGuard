@@ -113,13 +113,17 @@ export const ASK_ASSISTANT_RESPONSE_SCHEMA = {
 
 function formatTelemetryBlock(telemetry: AirTelemetry): string {
   return [
-    `LIVE ENVIRONMENTAL TELEMETRY (${telemetry.source}):`,
-    `- Location: ${telemetry.resolvedLocation} (lat ${telemetry.latitude}, lon ${telemetry.longitude})`,
-    `- Observed At: ${telemetry.timestamp}`,
-    `- US AQI: ${telemetry.usAqi} (${telemetry.category})`,
+    `LIVE ENVIRONMENTAL TELEMETRY (${telemetry.telemetrySource} · ${telemetry.source}):`,
+    `- Location: ${telemetry.resolvedLocation} [${telemetry.countryCode}] (lat ${telemetry.latitude}, lon ${telemetry.longitude})`,
+    `- Observed At: ${telemetry.observedAt}`,
+    `- Regional AQI Scale: ${telemetry.scaleName} (${telemetry.scaleCode}) — ${telemetry.aqiValue} / ${telemetry.scaleMax} (${telemetry.categoryLabel}, Severity Tier ${telemetry.severityTier}/6)`,
+    `- Dominant Pollutant: ${telemetry.dominantPollutant}`,
+    `- US EPA Reference AQI: ${telemetry.usAqi} (${telemetry.category})`,
     `- PM2.5: ${telemetry.pm25} µg/m³`,
     `- PM10: ${telemetry.pm10} µg/m³`,
     `- NO2: ${telemetry.no2} µg/m³`,
+    `- O3: ${telemetry.o3} µg/m³`,
+    `- SO2: ${telemetry.so2} µg/m³`,
     `- CO: ${telemetry.co} µg/m³`,
     `- Temperature: ${telemetry.temperatureC}°C`,
     `- Humidity: ${telemetry.humidityPercent}%`,

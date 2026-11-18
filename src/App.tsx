@@ -9,8 +9,10 @@ import { Navbar } from './components/Navbar';
 import { RecommendationCard } from './components/RecommendationCard';
 import type {
   ActionPlanResponse,
+  AirTelemetry,
   HouseholdProfile,
   PillarId,
+  ScaleOverride,
 } from './types/airQuality';
 
 const INITIAL_PROFILE: HouseholdProfile = {
@@ -21,6 +23,7 @@ const INITIAL_PROFILE: HouseholdProfile = {
   commuteMode: 'metro_bus',
   sensitiveGroups: ['children', 'asthma_respiratory'],
   lifestyleNotes: '',
+  scaleOverride: 'AUTO',
 };
 
 const PILLAR_TABS: Array<{ id: 'all' | PillarId; label: string }> = [
@@ -69,7 +72,7 @@ function VayuGuardWorkspace() {
       setAdoptedIds(initialAdopted);
 
       setStatusAnnouncement(
-        `Action plan ready for ${planResult.telemetry.resolvedLocation}. US AQI ${planResult.telemetry.usAqi}, ${planResult.telemetry.category}. ${planResult.recommendations.length} recommendations generated.`,
+        `Action plan ready for ${planResult.telemetry.resolvedLocation}. ${planResult.telemetry.scaleName} ${planResult.telemetry.aqiValue} out of ${planResult.telemetry.scaleMax}, ${planResult.telemetry.categoryLabel}. ${planResult.recommendations.length} recommendations generated.`,
       );
     } catch (err) {
       const msg =
@@ -89,6 +92,30 @@ function VayuGuardWorkspace() {
     const updated: HouseholdProfile = { ...profile, city: presetCity };
     setProfile(updated);
     void fetchActionPlan(updated);
+  };
+
+  const handleScaleChange = async (nextScale: ScaleOverride) => {
+    const updatedProfile: HouseholdProfile = { ...profile, scaleOverride: nextScale };
+    setProfile(updatedProfile);
+    if (!plan) return;
+
+    try {
+      const cityQuery = encodeURIComponent(plan.telemetry.city || profile.city);
+      const scaleQuery = encodeURIComponent(nextScale);
+      const response = await fetch(`/api/air-quality?city=${cityQuery}&scale=${scaleQuery}`);
+      const payload = (await response.json()) as { telemetry?: AirTelemetry; error?: string };
+      if (!response.ok || !payload.telemetry) {
+        throw new Error(payload.error || 'Unable to switch AQI scale.');
+      }
+      const nextTelemetry = payload.telemetry;
+      setPlan((prev) => (prev ? { ...prev, telemetry: nextTelemetry } : prev));
+      setStatusAnnouncement(
+        `Switched scale to ${nextTelemetry.scaleName}: ${nextTelemetry.aqiValue} out of ${nextTelemetry.scaleMax}, ${nextTelemetry.categoryLabel}.`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to switch AQI scale.';
+      setErrorMessage(msg);
+    }
   };
 
   const handleToggleAdopt = (id: string) => {
@@ -162,7 +189,12 @@ function VayuGuardWorkspace() {
         )}
 
         {/* Live Telemetry Ribbon */}
-        <AirTelemetryBanner telemetry={plan?.telemetry ?? null} isLoading={isLoading} />
+        <AirTelemetryBanner
+          telemetry={plan?.telemetry ?? null}
+          isLoading={isLoading}
+          scaleOverride={profile.scaleOverride ?? 'AUTO'}
+          onScaleChange={(nextScale) => void handleScaleChange(nextScale)}
+        />
 
         {/* Asymmetric Split Workspace: Left Controls + Right Action Plan */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
