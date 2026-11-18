@@ -28,9 +28,14 @@ import {
   sanitizeProfile,
   sanitizeQuestion,
   sanitizeScaleOverride,
+  stripControlChars,
+  truncateText,
   ValidationError,
 } from '../services/sanitizationService';
-import { fetchAirAndWeatherTelemetry } from '../services/weatherAirService';
+import {
+  fetchAirAndWeatherTelemetry,
+  searchGeocodingLocations,
+} from '../services/weatherAirService';
 
 export const apiRouter = Router();
 
@@ -43,6 +48,21 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
     cache: planResponseCache.getStats(),
     timestamp: new Date().toISOString(),
   });
+});
+
+apiRouter.get('/geocode', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rawQuery = typeof req.query.q === 'string' ? stripControlChars(req.query.q) : '';
+    const cleanQuery = truncateText(rawQuery, 80);
+    if (cleanQuery.length < 2) {
+      res.json({ results: [] });
+      return;
+    }
+    const results = await searchGeocodingLocations(cleanQuery);
+    res.json({ results });
+  } catch (err) {
+    next(err);
+  }
 });
 
 apiRouter.get('/air-quality', async (req: Request, res: Response, next: NextFunction) => {
@@ -189,7 +209,7 @@ apiRouter.post('/ask', async (req: Request, res: Response, next: NextFunction) =
             answer: parsed.answer.trim(),
             groundedMetricsUsed: Array.isArray(parsed.groundedMetricsUsed)
               ? parsed.groundedMetricsUsed.slice(0, 6)
-              : [`US AQI ${telemetry.usAqi}`, `PM2.5 ${telemetry.pm25} µg/m³`],
+              : [`${telemetry.scaleName} AQI ${telemetry.aqiValue}`, `PM2.5 ${telemetry.pm25} µg/m³`],
             cautionNote:
               typeof parsed.cautionNote === 'string' && parsed.cautionNote.trim().length > 0
                 ? parsed.cautionNote.trim()

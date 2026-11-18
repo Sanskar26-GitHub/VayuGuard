@@ -1,12 +1,16 @@
 import type {
   AirQualityCategory,
   AirTelemetry,
+  GeocodeOption,
+  RawPollutants,
   ScaleOverride,
   SeverityTier,
 } from '../../src/types/airQuality';
 import { computeRegionalAqi } from './regionalAqiService';
 
-const FETCH_TIMEOUT_MS = 5000;
+const FETCH_TIMEOUT_MS = 8000;
+const RETRY_BACKOFF_MS = 400;
+const USER_AGENT_HEADER = 'VayuGuard-AirAssistant/1.0';
 
 export interface OpenMeteoGeoLocation {
   name: string;
@@ -16,6 +20,7 @@ export interface OpenMeteoGeoLocation {
   latitude: number;
   longitude: number;
   population?: number;
+  timezone?: string;
 }
 
 export interface OpenMeteoGeoResult {
@@ -23,25 +28,87 @@ export interface OpenMeteoGeoResult {
 }
 
 export interface OpenMeteoAirQualityResult {
+  timezone?: string;
+  timezone_abbreviation?: string;
   current?: {
     time?: string;
-    us_aqi?: number;
-    pm2_5?: number;
-    pm10?: number;
-    nitrogen_dioxide?: number;
-    carbon_monoxide?: number;
-    ozone?: number;
-    sulphur_dioxide?: number;
+    us_aqi?: number | null;
+    pm2_5?: number | null;
+    pm10?: number | null;
+    nitrogen_dioxide?: number | null;
+    carbon_monoxide?: number | null;
+    ozone?: number | null;
+    sulphur_dioxide?: number | null;
   };
 }
 
 export interface OpenMeteoWeatherResult {
+  timezone?: string;
+  timezone_abbreviation?: string;
   current?: {
     time?: string;
-    temperature_2m?: number;
-    relative_humidity_2m?: number;
-    wind_speed_10m?: number;
+    temperature_2m?: number | null;
+    relative_humidity_2m?: number | null;
+    wind_speed_10m?: number | null;
   };
+}
+
+const COUNTRY_HINT_ALIASES: Record<string, string[]> = {
+  uk: ['gb', 'uk', 'united kingdom', 'great britain'],
+  'united kingdom': ['gb', 'uk', 'united kingdom'],
+  usa: ['us', 'usa', 'united states', 'united states of america'],
+  us: ['us', 'usa', 'united states'],
+  'united states': ['us', 'usa', 'united states'],
+  uae: ['ae', 'uae', 'united arab emirates'],
+  india: ['in', 'india'],
+  china: ['cn', 'china'],
+  germany: ['de', 'germany'],
+  france: ['fr', 'france'],
+};
+
+const TIMEZONE_ABBR_FALLBACKS: Record<string, string> = {
+  'Asia/Kolkata': 'IST',
+  'Asia/Calcutta': 'IST',
+  'Europe/London': 'GMT',
+  'America/Chicago': 'CST',
+};
+
+/**
+ * Splits a "City, Country" query into city search name and optional country hint.
+ */
+export function parseCityAndCountryQuery(input: string): {
+  cityName: string;
+  countryHint: string;
+} {
+  const parts = input
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const rawCity = parts[0] ?? input.trim();
+  const cityName = rawCity.replace(/\bNCR\b/gi, '').trim() || rawCity;
+  const countryHint = parts.slice(1).join(' ').trim();
+  return { cityName, countryHint };
+}
+
+function locationMatchesCountryHint(
+  loc: OpenMeteoGeoLocation,
+  countryHint: string,
+): boolean {
+  const hint = countryHint.trim().toLowerCase();
+  if (!hint) return true;
+
+  const aliases = COUNTRY_HINT_ALIASES[hint] ?? [hint];
+  const country = (loc.country ?? '').trim().toLowerCase();
+  const code = (loc.country_code ?? '').trim().toLowerCase();
+  const admin1 = (loc.admin1 ?? '').trim().toLowerCase();
+
+  return aliases.some(
+    (alias) =>
+      code === alias ||
+      country === alias ||
+      country.includes(alias) ||
+      admin1 === alias,
+  );
 }
 
 /**
@@ -65,15 +132,110 @@ export function detectThermalInversion(temperatureC: number, windSpeedKmh: numbe
 }
 
 /**
- * Sorts Open-Meteo geocoding matches by population descending so major urban centers
- * (e.g., Chicago, IL vs. small homonymous towns) are always prioritized.
+ * Sorts Open-Meteo geocoding matches by country hint match (when provided) and then
+ * population descending so major urban centers (e.g., Chicago, IL vs. small towns) win.
  */
 export function selectTopGeocodingMatch(
   results?: OpenMeteoGeoLocation[],
+  countryHint = '',
 ): OpenMeteoGeoLocation | undefined {
   if (!results || results.length === 0) return undefined;
-  const sorted = [...results].sort((a, b) => (b.population ?? 0) - (a.population ?? 0));
+  const cleanHint = countryHint.trim();
+  const matching = cleanHint
+    ? results.filter((loc) => locationMatchesCountryHint(loc, cleanHint))
+    : results;
+  const pool = matching.length > 0 ? matching : results;
+  const sorted = [...pool].sort((a, b) => (b.population ?? 0) - (a.population ?? 0));
   return sorted[0];
+}
+
+function validateIanaTimeZone(tz?: string): string {
+  const candidate = (tz ?? '').trim();
+  if (!candidate) return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: candidate });
+    return candidate;
+  } catch {
+    return 'UTC';
+  }
+}
+
+/**
+ * Formats an observation timestamp into a clean, human-readable local time string
+ * in the searched city's IANA timezone (e.g. "Nov 18, 2026, 3:15 PM IST").
+ */
+export function formatObservedLocalTime(
+  rawTime: string | undefined,
+  timezone?: string,
+  timezoneAbbr?: string,
+): string {
+  const validTz = validateIanaTimeZone(timezone);
+
+  let instant: Date;
+  const trimmed = (rawTime ?? '').trim();
+  const wallClockMatch =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
+
+  if (wallClockMatch) {
+    // Open-Meteo `timezone=auto` returns local wall-clock strings without an offset.
+    const [, yStr, mStr, dStr, hhStr, mmStr, ssStr] = wallClockMatch;
+    const utcGuess = Date.UTC(
+      Number(yStr),
+      Number(mStr) - 1,
+      Number(dStr),
+      Number(hhStr),
+      Number(mmStr),
+      Number(ssStr ?? '0'),
+    );
+
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: validTz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(utcGuess));
+
+    const getPart = (type: string): number =>
+      Number(parts.find((p) => p.type === type)?.value ?? 0);
+
+    const tzGuessAsUtc = Date.UTC(
+      getPart('year'),
+      getPart('month') - 1,
+      getPart('day'),
+      getPart('hour'),
+      getPart('minute'),
+      getPart('second'),
+    );
+    const offsetMs = tzGuessAsUtc - utcGuess;
+    instant = new Date(utcGuess - offsetMs);
+  } else {
+    const parsed = trimmed ? new Date(trimmed) : new Date();
+    instant = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  }
+
+  const formatted = new Intl.DateTimeFormat('en-US', {
+    timeZone: validTz,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  }).format(instant);
+
+  const cleanAbbr = (timezoneAbbr ?? '').trim();
+  const preferredAbbr =
+    /^[A-Z]{2,5}$/.test(cleanAbbr) ? cleanAbbr : TIMEZONE_ABBR_FALLBACKS[validTz];
+
+  if (preferredAbbr && /\sGMT(?:[+-]\d{1,2}(?::\d{2})?)?$/.test(formatted)) {
+    return formatted.replace(/\sGMT(?:[+-]\d{1,2}(?::\d{2})?)?$/, ` ${preferredAbbr}`);
+  }
+  return formatted;
 }
 
 export function buildVentilationRecommendation(
@@ -115,6 +277,11 @@ export function buildVentilationRecommendation(
   };
 }
 
+function toNullableMetric(value: unknown, decimals = 1): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Number(Math.max(0, value).toFixed(decimals));
+}
+
 /**
  * Pure parser transforming raw Open-Meteo geocoding, `current=` air-quality, and `current=` weather JSON
  * responses into a strongly typed, location-aware regional AirTelemetry object.
@@ -127,31 +294,37 @@ export function parseOpenMeteoResponses(
   source: 'open-meteo-live' | 'meteorological-baseline' = 'open-meteo-live',
   scaleOverride: ScaleOverride = 'AUTO',
 ): AirTelemetry {
-  const location = selectTopGeocodingMatch(geo.results);
+  const { countryHint } = parseCityAndCountryQuery(cityInput);
+  const location = selectTopGeocodingMatch(geo.results, countryHint);
+
   const resolvedLocation = location
     ? [location.name, location.admin1, location.country].filter(Boolean).join(', ')
     : cityInput;
+  const cityWithCountry = location
+    ? [location.name, location.country].filter(Boolean).join(', ')
+    : cityInput;
   const countryCode = (location?.country_code ?? 'US').trim().toUpperCase();
+  const timezone = aq.timezone ?? weather.timezone ?? location?.timezone ?? 'UTC';
+  const timezoneAbbreviation =
+    aq.timezone_abbreviation ?? weather.timezone_abbreviation ?? '';
 
-  const pm25 = Number(Math.max(0, aq.current?.pm2_5 ?? 28).toFixed(1));
-  const pm10 = Number(Math.max(0, aq.current?.pm10 ?? 54).toFixed(1));
-  const no2 = Number(Math.max(0, aq.current?.nitrogen_dioxide ?? 32).toFixed(1));
-  const co = Number(Math.max(0, aq.current?.carbon_monoxide ?? 410).toFixed(1));
-  const o3 = Number(Math.max(0, aq.current?.ozone ?? 48).toFixed(1));
-  const so2 = Number(Math.max(0, aq.current?.sulphur_dioxide ?? 8).toFixed(1));
+  const rawPollutants: RawPollutants = {
+    pm25: toNullableMetric(aq.current?.pm2_5, 1),
+    pm10: toNullableMetric(aq.current?.pm10, 1),
+    no2: toNullableMetric(aq.current?.nitrogen_dioxide, 1),
+    co: toNullableMetric(aq.current?.carbon_monoxide, 1),
+    o3: toNullableMetric(aq.current?.ozone, 1),
+    so2: toNullableMetric(aq.current?.sulphur_dioxide, 1),
+  };
 
-  // Compute US EPA AQI directly from raw concentrations (or fallback to Open-Meteo's us_aqi if available)
-  const usEpaCalc = computeRegionalAqi({ pm25, pm10, no2, co, o3, so2 }, 'US', 'US_EPA');
+  // Compute US EPA AQI directly from available non-null concentrations (or fallback to Open-Meteo's us_aqi)
+  const usEpaCalc = computeRegionalAqi(rawPollutants, 'US', 'US_EPA');
   const usAqi =
     typeof aq.current?.us_aqi === 'number' && Number.isFinite(aq.current.us_aqi)
       ? Math.max(0, Math.round(aq.current.us_aqi))
       : usEpaCalc.aqiValue;
 
-  const regional = computeRegionalAqi(
-    { pm25, pm10, no2, co, o3, so2 },
-    countryCode,
-    scaleOverride,
-  );
+  const regional = computeRegionalAqi(rawPollutants, countryCode, scaleOverride);
 
   const temperatureC = Number((weather.current?.temperature_2m ?? 22).toFixed(1));
   const humidityPercent = Math.round(weather.current?.relative_humidity_2m ?? 52);
@@ -164,15 +337,19 @@ export function parseOpenMeteoResponses(
     windSpeedKmh,
   );
 
-  const observedAt = aq.current?.time ?? weather.current?.time ?? new Date().toISOString();
+  const rawTime = aq.current?.time ?? weather.current?.time ?? new Date().toISOString();
+  const observedAt = formatObservedLocalTime(rawTime, timezone, timezoneAbbreviation);
 
   return {
-    city: cityInput,
+    city: cityWithCountry,
+    cityWithCountry,
     resolvedLocation,
     countryCode,
+    timezone,
+    timezoneAbbreviation,
     latitude: location?.latitude ?? 0,
     longitude: location?.longitude ?? 0,
-    timestamp: observedAt,
+    timestamp: rawTime,
     observedAt,
     usAqi,
     category: classifyUsAqi(usAqi),
@@ -184,12 +361,13 @@ export function parseOpenMeteoResponses(
     severityTier: regional.severityTier,
     dominantPollutant: regional.dominantPollutant,
     isAutoSelectedScale: regional.isAutoSelectedScale,
-    pm25,
-    pm10,
-    no2,
-    co,
-    o3,
-    so2,
+    pollutantSubIndices: regional.pollutantSubIndices,
+    pm25: rawPollutants.pm25 ?? 0,
+    pm10: rawPollutants.pm10 ?? 0,
+    no2: rawPollutants.no2 ?? 0,
+    co: rawPollutants.co ?? 0,
+    o3: rawPollutants.o3 ?? 0,
+    so2: rawPollutants.so2 ?? 0,
     temperatureC,
     humidityPercent,
     windSpeedKmh,
@@ -207,7 +385,10 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs = FETCH_TIMEOUT_MS
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': USER_AGENT_HEADER,
+      },
     });
     if (!response.ok) {
       throw new Error(`Open-Meteo HTTP ${response.status}`);
@@ -218,11 +399,32 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs = FETCH_TIMEOUT_MS
   }
 }
 
+async function fetchJsonWithRetry<T>(
+  url: string,
+  timeoutMs = FETCH_TIMEOUT_MS,
+  maxRetries = 1,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      return await fetchJsonWithTimeout<T>(url, timeoutMs);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 interface BaselineProfile {
   name: string;
   admin1: string;
   country: string;
   countryCode: string;
+  timezone: string;
+  timezoneAbbreviation: string;
   latitude: number;
   longitude: number;
   usAqi: number;
@@ -238,29 +440,13 @@ interface BaselineProfile {
 }
 
 const OFFLINE_METEOROLOGICAL_BASELINES: Record<string, BaselineProfile> = {
-  'delhi ncr': {
-    name: 'Delhi',
-    admin1: 'Delhi',
-    country: 'India',
-    countryCode: 'IN',
-    latitude: 28.6519,
-    longitude: 77.2315,
-    usAqi: 248,
-    pm25: 174.2,
-    pm10: 268.5,
-    no2: 64.8,
-    co: 1120,
-    o3: 42.0,
-    so2: 18.5,
-    temperatureC: 13.4,
-    humidityPercent: 68,
-    windSpeedKmh: 5.2,
-  },
   delhi: {
     name: 'Delhi',
-    admin1: 'Delhi',
+    admin1: 'National Capital Territory of Delhi',
     country: 'India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 28.6519,
     longitude: 77.2315,
     usAqi: 248,
@@ -279,6 +465,8 @@ const OFFLINE_METEOROLOGICAL_BASELINES: Record<string, BaselineProfile> = {
     admin1: 'Rajasthan',
     country: 'India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 26.9124,
     longitude: 75.7873,
     usAqi: 158,
@@ -297,6 +485,8 @@ const OFFLINE_METEOROLOGICAL_BASELINES: Record<string, BaselineProfile> = {
     admin1: 'Karnataka',
     country: 'India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 12.9716,
     longitude: 77.5946,
     usAqi: 74,
@@ -315,6 +505,8 @@ const OFFLINE_METEOROLOGICAL_BASELINES: Record<string, BaselineProfile> = {
     admin1: 'Maharashtra',
     country: 'India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 19.076,
     longitude: 72.8777,
     usAqi: 118,
@@ -333,6 +525,8 @@ const OFFLINE_METEOROLOGICAL_BASELINES: Record<string, BaselineProfile> = {
     admin1: 'Illinois',
     country: 'United States',
     countryCode: 'US',
+    timezone: 'America/Chicago',
+    timezoneAbbreviation: 'CST',
     latitude: 41.85,
     longitude: -87.65,
     usAqi: 62,
@@ -351,6 +545,8 @@ const OFFLINE_METEOROLOGICAL_BASELINES: Record<string, BaselineProfile> = {
     admin1: 'England',
     country: 'United Kingdom',
     countryCode: 'GB',
+    timezone: 'Europe/London',
+    timezoneAbbreviation: 'GMT',
     latitude: 51.5085,
     longitude: -0.1257,
     usAqi: 44,
@@ -370,14 +566,21 @@ export function getMeteorologicalBaseline(
   cityInput: string,
   scaleOverride: ScaleOverride = 'AUTO',
 ): AirTelemetry {
-  const normalized = cityInput.trim().toLowerCase();
-  const known = OFFLINE_METEOROLOGICAL_BASELINES[normalized];
+  const { cityName, countryHint } = parseCityAndCountryQuery(cityInput);
+  const normalizedCity = cityName.toLowerCase();
+  const known = OFFLINE_METEOROLOGICAL_BASELINES[normalizedCity];
 
   const baseline: BaselineProfile = known ?? {
-    name: cityInput.trim(),
+    name: cityName || cityInput.trim(),
     admin1: '',
-    country: '',
-    countryCode: 'US',
+    country: countryHint || '',
+    countryCode: countryHint.toLowerCase().includes('india')
+      ? 'IN'
+      : countryHint.toLowerCase().includes('uk') || countryHint.toLowerCase().includes('united kingdom')
+        ? 'GB'
+        : 'US',
+    timezone: 'UTC',
+    timezoneAbbreviation: 'UTC',
     latitude: 28.6,
     longitude: 77.2,
     usAqi: 78,
@@ -392,6 +595,8 @@ export function getMeteorologicalBaseline(
     windSpeedKmh: 9.2,
   };
 
+  const nowIso = new Date().toISOString();
+
   return parseOpenMeteoResponses(
     cityInput,
     {
@@ -404,12 +609,15 @@ export function getMeteorologicalBaseline(
           latitude: baseline.latitude,
           longitude: baseline.longitude,
           population: 1000000,
+          timezone: baseline.timezone,
         },
       ],
     },
     {
+      timezone: baseline.timezone,
+      timezone_abbreviation: baseline.timezoneAbbreviation,
       current: {
-        time: new Date().toISOString(),
+        time: nowIso,
         us_aqi: baseline.usAqi,
         pm2_5: baseline.pm25,
         pm10: baseline.pm10,
@@ -420,8 +628,10 @@ export function getMeteorologicalBaseline(
       },
     },
     {
+      timezone: baseline.timezone,
+      timezone_abbreviation: baseline.timezoneAbbreviation,
       current: {
-        time: new Date().toISOString(),
+        time: nowIso,
         temperature_2m: baseline.temperatureC,
         relative_humidity_2m: baseline.humidityPercent,
         wind_speed_10m: baseline.windSpeedKmh,
@@ -433,22 +643,60 @@ export function getMeteorologicalBaseline(
 }
 
 /**
- * Fetches live population-prioritized geocoding (`count=5`), real-time `current=` air quality,
- * and `current=` weather telemetry via keyless Open-Meteo APIs with a strict 5-second timeout
- * and graceful offline meteorological baseline fallback.
+ * Lightweight geocoding lookup returning population-ranked City, Region, Country options
+ * for live UI autocomplete.
+ */
+export async function searchGeocodingLocations(query: string): Promise<GeocodeOption[]> {
+  const { cityName, countryHint } = parseCityAndCountryQuery(query);
+  if (cityName.length < 2) return [];
+
+  const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
+    cityName,
+  )}&count=6&language=en&format=json`;
+
+  try {
+    const geoData = await fetchJsonWithRetry<OpenMeteoGeoResult>(geoUrl);
+    const results = geoData.results ?? [];
+    if (results.length === 0) return [];
+
+    const filtered = countryHint
+      ? results.filter((loc) => locationMatchesCountryHint(loc, countryHint))
+      : results;
+    const pool = filtered.length > 0 ? filtered : results;
+
+    return [...pool]
+      .sort((a, b) => (b.population ?? 0) - (a.population ?? 0))
+      .map((loc) => ({
+        label: [loc.name, loc.admin1, loc.country].filter(Boolean).join(', '),
+        cityWithCountry: [loc.name, loc.country].filter(Boolean).join(', '),
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        countryCode: (loc.country_code ?? 'US').trim().toUpperCase(),
+        timezone: loc.timezone ?? 'UTC',
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches live population-prioritized geocoding (`count=6`), real-time `current=` air quality,
+ * and `current=` weather telemetry via keyless Open-Meteo APIs with an 8-second timeout,
+ * 1 automatic retry (400ms backoff), `Promise.allSettled` resilience, and offline fallback
+ * reserved strictly for total network failure after retry.
  */
 export async function fetchAirAndWeatherTelemetry(
   cityInput: string,
   scaleOverride: ScaleOverride = 'AUTO',
 ): Promise<AirTelemetry> {
-  const queryCity = cityInput.replace(/\bNCR\b/gi, '').trim() || cityInput.trim();
+  const { cityName, countryHint } = parseCityAndCountryQuery(cityInput);
   const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
-    queryCity,
-  )}&count=5&language=en&format=json`;
+    cityName || cityInput.trim(),
+  )}&count=6&language=en&format=json`;
 
   try {
-    const geoData = await fetchJsonWithTimeout<OpenMeteoGeoResult>(geoUrl);
-    const topMatch = selectTopGeocodingMatch(geoData.results);
+    const geoData = await fetchJsonWithRetry<OpenMeteoGeoResult>(geoUrl);
+    const topMatch = selectTopGeocodingMatch(geoData.results, countryHint);
     if (!topMatch) {
       return getMeteorologicalBaseline(cityInput, scaleOverride);
     }
@@ -456,10 +704,24 @@ export async function fetchAirAndWeatherTelemetry(
     const aqUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${topMatch.latitude}&longitude=${topMatch.longitude}&current=pm2_5,pm10,nitrogen_dioxide,carbon_monoxide,ozone,sulphur_dioxide,us_aqi&timezone=auto`;
     const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${topMatch.latitude}&longitude=${topMatch.longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m&timezone=auto`;
 
-    const [aqData, weatherData] = await Promise.all([
-      fetchJsonWithTimeout<OpenMeteoAirQualityResult>(aqUrl),
-      fetchJsonWithTimeout<OpenMeteoWeatherResult>(weatherUrl),
+    const [aqSettled, weatherSettled] = await Promise.allSettled([
+      fetchJsonWithRetry<OpenMeteoAirQualityResult>(aqUrl),
+      fetchJsonWithRetry<OpenMeteoWeatherResult>(weatherUrl),
     ]);
+
+    if (aqSettled.status !== 'fulfilled') {
+      return getMeteorologicalBaseline(cityInput, scaleOverride);
+    }
+
+    const aqData = aqSettled.value;
+    const weatherData: OpenMeteoWeatherResult =
+      weatherSettled.status === 'fulfilled'
+        ? weatherSettled.value
+        : {
+            timezone: aqData.timezone ?? topMatch.timezone ?? 'UTC',
+            timezone_abbreviation: aqData.timezone_abbreviation ?? '',
+            current: {},
+          };
 
     return parseOpenMeteoResponses(
       cityInput,

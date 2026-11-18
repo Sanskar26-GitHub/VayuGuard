@@ -5,13 +5,16 @@ import { computeCommunityImpact } from '../src/utils/impactMath';
 
 describe('Programmatic Grounding & Bounds Verifier', () => {
   const telemetry: AirTelemetry = {
-    city: 'Delhi NCR',
+    city: 'Delhi, India',
+    cityWithCountry: 'Delhi, India',
     resolvedLocation: 'Delhi, India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 28.65,
     longitude: 77.23,
     timestamp: '2026-11-17T08:00',
-    observedAt: '2026-11-17T08:00',
+    observedAt: 'Nov 17, 2026, 8:00 AM IST',
     usAqi: 248,
     category: 'Very Unhealthy',
     aqiValue: 342,
@@ -22,6 +25,7 @@ describe('Programmatic Grounding & Bounds Verifier', () => {
     severityTier: 5,
     dominantPollutant: 'PM2.5',
     isAutoSelectedScale: true,
+    pollutantSubIndices: [],
     pm25: 174.2,
     pm10: 268.5,
     no2: 64.8,
@@ -90,13 +94,16 @@ describe('Programmatic Grounding & Bounds Verifier', () => {
 
 describe('Community Impact Simulator Math', () => {
   const telemetry: AirTelemetry = {
-    city: 'Mumbai',
+    city: 'Mumbai, India',
+    cityWithCountry: 'Mumbai, India',
     resolvedLocation: 'Mumbai, India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 19.07,
     longitude: 72.87,
     timestamp: '2026-11-17T08:00',
-    observedAt: '2026-11-17T08:00',
+    observedAt: 'Nov 17, 2026, 8:00 AM IST',
     usAqi: 120,
     category: 'Unhealthy for Sensitive Groups',
     aqiValue: 88,
@@ -107,6 +114,7 @@ describe('Community Impact Simulator Math', () => {
     severityTier: 2,
     dominantPollutant: 'PM10',
     isAutoSelectedScale: true,
+    pollutantSubIndices: [],
     pm25: 45.0,
     pm10: 88.0,
     no2: 46.0,

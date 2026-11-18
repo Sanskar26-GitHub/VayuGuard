@@ -9,7 +9,7 @@ import type {
 import { ErrorAlertBanner } from './ErrorBoundary';
 
 interface AskAssistantPanelProps {
-  profile: HouseholdProfile;
+  profile: HouseholdProfile | null;
   telemetry: AirTelemetry | null;
 }
 
@@ -24,6 +24,10 @@ export function AskAssistantPanel({ profile, telemetry }: AskAssistantPanelProps
   const [isAsking, setIsAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answerData, setAnswerData] = useState<AskAssistantResponse | null>(null);
+
+  if (!telemetry || !profile) {
+    return null;
+  }
 
   const submitQuestion = async (textToAsk: string) => {
     const trimmed = textToAsk.trim();
@@ -76,11 +80,9 @@ export function AskAssistantPanel({ profile, telemetry }: AskAssistantPanelProps
             Ask the Air Assistant
           </h2>
           <p className="text-sm text-slate-600">
-            Get situational advice grounded in{' '}
-            {telemetry
-              ? `${telemetry.resolvedLocation}'s ${telemetry.scaleName} (${telemetry.aqiValue}/${telemetry.scaleMax} · ${telemetry.categoryLabel})`
-              : 'your city telemetry'}{' '}
-            and household profile.
+            Get situational advice grounded in {telemetry.resolvedLocation}&apos;s{' '}
+            {telemetry.scaleName} (AQI {telemetry.aqiValue} · {telemetry.categoryLabel}) and
+            household profile.
           </p>
         </div>
       </div>

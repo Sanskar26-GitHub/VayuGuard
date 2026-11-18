@@ -1,11 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
   CloudSun,
   Compass,
   Droplets,
+  ExternalLink,
   Gauge,
   Globe,
   Thermometer,
@@ -33,12 +36,23 @@ const SCALE_OPTIONS: Array<{ value: ScaleOverride; label: string }> = [
   { value: 'EU_EAQI', label: 'European EAQI (1–6)' },
 ];
 
+export function formatHemisphereCoordinate(
+  value: number,
+  positiveHemisphere: 'N' | 'E',
+  negativeHemisphere: 'S' | 'W',
+): string {
+  const hemisphere = value >= 0 ? positiveHemisphere : negativeHemisphere;
+  return `${Math.abs(value).toFixed(4)}° ${hemisphere}`;
+}
+
 export function AirTelemetryBanner({
   telemetry,
   isLoading,
   scaleOverride = 'AUTO',
   onScaleChange,
 }: AirTelemetryBannerProps) {
+  const [showRawVerification, setShowRawVerification] = useState(false);
+
   if (isLoading && !telemetry) {
     return (
       <section
@@ -66,9 +80,30 @@ export function AirTelemetryBanner({
   const inversionToken = telemetry.thermalInversionRisk
     ? STATUS_ACCESSIBLE_TOKENS.inversionWarning
     : STATUS_ACCESSIBLE_TOKENS.dispersionClear;
+  const offlineNoticeToken = STATUS_ACCESSIBLE_TOKENS.inversionWarning;
 
   const isElevatedAqi = telemetry.severityTier >= 3;
   const isLive = telemetry.telemetrySource === 'live';
+
+  const latFormatted = formatHemisphereCoordinate(telemetry.latitude, 'N', 'S');
+  const lonFormatted = formatHemisphereCoordinate(telemetry.longitude, 'E', 'W');
+  const osmUrl = `https://www.openstreetmap.org/?mlat=${telemetry.latitude.toFixed(
+    4,
+  )}&mlon=${telemetry.longitude.toFixed(4)}#map=12/${telemetry.latitude.toFixed(
+    4,
+  )}/${telemetry.longitude.toFixed(4)}`;
+
+  const subIndices = telemetry.pollutantSubIndices ?? [];
+  const getConcDisplay = (
+    pollutant: 'PM2.5' | 'PM10' | 'NO2' | 'CO' | 'O3' | 'SO2',
+    fallbackNum: number,
+  ): string => {
+    const found = subIndices.find((item) => item.pollutant === pollutant);
+    if (found) {
+      return found.concentration === null ? 'N/A' : String(found.concentration);
+    }
+    return String(fallbackNum);
+  };
 
   return (
     <section
@@ -76,9 +111,26 @@ export function AirTelemetryBanner({
       aria-labelledby="telemetry-heading"
       className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6"
     >
+      {!isLive && (
+        <div
+          role="status"
+          className="mb-4 flex items-center gap-2.5 rounded-lg border px-3.5 py-2.5 text-xs font-semibold sm:text-sm"
+          style={{
+            backgroundColor: offlineNoticeToken.background,
+            borderColor: offlineNoticeToken.border,
+            color: offlineNoticeToken.foreground,
+          }}
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>
+            Offline Baseline Estimate — Live Open-Meteo telemetry could not be reached from this network.
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-slate-600">
             <Compass className="h-4 w-4 text-[#0F4C81]" aria-hidden="true" />
             <span className="font-semibold text-slate-800">
               {isLive ? 'Live Telemetry' : 'Offline Baseline'}
@@ -90,8 +142,17 @@ export function AirTelemetryBanner({
             </span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">
-              {telemetry.latitude.toFixed(2)}°, {telemetry.longitude.toFixed(2)}°
+              {latFormatted}, {lonFormatted}
             </span>
+            <a
+              href={osmUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-semibold text-[#0F4C81] underline decoration-slate-300 underline-offset-2 hover:text-[#0B3A63]"
+            >
+              <span>Verify Coordinates</span>
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
           </div>
 
           <h2
@@ -103,7 +164,8 @@ export function AirTelemetryBanner({
 
           <p className="mt-1 text-xs font-medium text-slate-600">
             <span>
-              {telemetry.scaleName} · {telemetry.isAutoSelectedScale ? 'Local Standard' : 'Manual Comparison'}
+              {telemetry.scaleName} ·{' '}
+              {telemetry.isAutoSelectedScale ? 'Local Standard' : 'Manual Comparison'}
             </span>
             <span className="mx-1.5" aria-hidden="true">
               ·
@@ -117,8 +179,9 @@ export function AirTelemetryBanner({
 
         <div className="flex flex-col gap-3 sm:items-end">
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Status indicator always pairs icon + text label (never hue alone) */}
+            {/* Single AQI value + category label (no X / Y fraction) */}
             <div
+              data-testid="aqi-status-pill"
               className="inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold"
               style={{
                 backgroundColor: severityToken.background,
@@ -131,9 +194,7 @@ export function AirTelemetryBanner({
               ) : (
                 <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
               )}
-              <span className="font-mono tabular-nums">
-                {telemetry.aqiValue} / {telemetry.scaleMax}
-              </span>
+              <span className="font-mono tabular-nums">AQI {telemetry.aqiValue}</span>
               <span aria-hidden="true">·</span>
               <span>{telemetry.categoryLabel}</span>
             </div>
@@ -193,7 +254,7 @@ export function AirTelemetryBanner({
             <Gauge className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
           </div>
           <p className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
-            {telemetry.pm25}
+            {getConcDisplay('PM2.5', telemetry.pm25)}
             <span className="ml-1 text-xs font-normal text-slate-600">µg/m³</span>
           </p>
         </div>
@@ -204,7 +265,7 @@ export function AirTelemetryBanner({
             <Gauge className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
           </div>
           <p className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
-            {telemetry.pm10}
+            {getConcDisplay('PM10', telemetry.pm10)}
             <span className="ml-1 text-xs font-normal text-slate-600">µg/m³</span>
           </p>
         </div>
@@ -215,7 +276,7 @@ export function AirTelemetryBanner({
             <CloudSun className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
           </div>
           <p className="mt-1.5 font-mono text-2xl font-bold text-slate-900 tabular-nums">
-            {telemetry.no2}
+            {getConcDisplay('NO2', telemetry.no2)}
             <span className="ml-1 text-xs font-normal text-slate-600">µg/m³</span>
           </p>
         </div>
@@ -264,6 +325,116 @@ export function AirTelemetryBanner({
           <span className="font-semibold text-slate-900">Ventilation Window: </span>
           <span>{telemetry.recommendedVentilationWindow}</span>
         </div>
+      </div>
+
+      {/* Collapsible Raw Pollutant & Scale Calculation Disclosure */}
+      <div className="mt-4 border-t border-slate-200 pt-3">
+        <button
+          type="button"
+          aria-expanded={showRawVerification}
+          aria-controls="raw-pollutant-verification-panel"
+          onClick={() => setShowRawVerification((prev) => !prev)}
+          className="inline-flex items-center gap-2 text-xs font-semibold text-[#0F4C81] hover:text-[#0B3A63]"
+        >
+          {showRawVerification ? (
+            <ChevronUp className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          )}
+          <span>Verify Raw Pollutants &amp; Scale Calculation</span>
+        </button>
+
+        {showRawVerification && (
+          <div
+            id="raw-pollutant-verification-panel"
+            className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
+          >
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs font-semibold text-slate-900">
+                Sub-Index Calculation under {telemetry.scaleName}
+              </p>
+              <p className="text-xs text-slate-600">
+                Overall index equals the maximum pollutant sub-index ({telemetry.dominantPollutant}:{' '}
+                <span className="font-mono font-semibold text-slate-900 tabular-nums">
+                  AQI {telemetry.aqiValue}
+                </span>
+                ).
+              </p>
+            </div>
+
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-600">
+                    <th className="py-2 pr-3 font-semibold">Pollutant</th>
+                    <th className="py-2 pr-3 text-right font-semibold">Raw Concentration</th>
+                    <th className="py-2 pr-3 text-right font-semibold">Computed Sub-Index</th>
+                    <th className="py-2 font-semibold">Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subIndices.map((row) => (
+                    <tr
+                      key={row.pollutant}
+                      className={`border-b border-slate-200 last:border-b-0 ${
+                        row.isDominant ? 'bg-[#EFF6FF] font-semibold text-slate-900' : 'text-slate-700'
+                      }`}
+                    >
+                      <td className="py-2 pr-3 font-mono">{row.pollutant}</td>
+                      <td className="py-2 pr-3 text-right font-mono tabular-nums">
+                        {row.concentration === null ? 'N/A' : `${row.concentration} ${row.unit}`}
+                      </td>
+                      <td className="py-2 pr-3 text-right font-mono tabular-nums">
+                        {row.subIndex === null ? 'N/A (Not indexed)' : row.subIndex}
+                      </td>
+                      <td className="py-2">
+                        {row.isDominant ? (
+                          <span className="inline-flex items-center gap-1 text-[#0F4C81]">
+                            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Dominant Driver</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">Secondary</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200 pt-3 text-xs text-slate-600">
+              <span className="font-semibold text-slate-800">Cross-check external monitors:</span>
+              <a
+                href="https://airquality.cpcb.gov.in/AQI_India/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-medium text-[#0F4C81] underline decoration-slate-300 underline-offset-2 hover:text-[#0B3A63]"
+              >
+                <span>CPCB NAQI (India)</span>
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              </a>
+              <a
+                href="https://aqicn.org/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-medium text-[#0F4C81] underline decoration-slate-300 underline-offset-2 hover:text-[#0B3A63]"
+              >
+                <span>AQICN World Monitor</span>
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              </a>
+              <a
+                href="https://open-meteo.com/en/docs/air-quality-api"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-medium text-[#0F4C81] underline decoration-slate-300 underline-offset-2 hover:text-[#0B3A63]"
+              >
+                <span>Open-Meteo Model Docs</span>
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              </a>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

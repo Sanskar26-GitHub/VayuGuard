@@ -21,6 +21,8 @@ import {
 import {
   classifyUsAqi,
   detectThermalInversion,
+  formatObservedLocalTime,
+  parseCityAndCountryQuery,
   parseOpenMeteoResponses,
   selectTopGeocodingMatch,
 } from '../server/services/weatherAirService';
@@ -209,9 +211,90 @@ describe('Location-Aware Regional AQI Scale Engine & Geocoding Priority', () => 
     expect(match?.admin1).toBe('Illinois');
     expect(match?.population).toBe(2746388);
   });
+
+  it('splits "City, Country" queries and filters geocoding candidates by country hint', () => {
+    expect(parseCityAndCountryQuery('London, UK')).toEqual({
+      cityName: 'London',
+      countryHint: 'UK',
+    });
+    expect(parseCityAndCountryQuery('Delhi NCR, India')).toEqual({
+      cityName: 'Delhi',
+      countryHint: 'India',
+    });
+
+    const londonMatch = selectTopGeocodingMatch(
+      [
+        {
+          name: 'London',
+          admin1: 'Ontario',
+          country: 'Canada',
+          country_code: 'CA',
+          latitude: 42.98,
+          longitude: -81.23,
+          population: 383822,
+        },
+        {
+          name: 'London',
+          admin1: 'England',
+          country: 'United Kingdom',
+          country_code: 'GB',
+          latitude: 51.5085,
+          longitude: -0.1257,
+          population: 8961989,
+        },
+      ],
+      'UK',
+    );
+    expect(londonMatch?.country_code).toBe('GB');
+
+    const londonOntarioMatch = selectTopGeocodingMatch(
+      [
+        {
+          name: 'London',
+          admin1: 'England',
+          country: 'United Kingdom',
+          country_code: 'GB',
+          latitude: 51.5085,
+          longitude: -0.1257,
+          population: 8961989,
+        },
+        {
+          name: 'London',
+          admin1: 'Ontario',
+          country: 'Canada',
+          country_code: 'CA',
+          latitude: 42.98,
+          longitude: -81.23,
+          population: 383822,
+        },
+      ],
+      'Canada',
+    );
+    expect(londonOntarioMatch?.country_code).toBe('CA');
+  });
+
+  it('computes live regional AQI from available pollutants when secondary gases are null', () => {
+    const partial = computeRegionalAqi(
+      {
+        pm25: 38.0,
+        pm10: 62.0,
+        no2: null,
+        co: null,
+        o3: null,
+        so2: null,
+      },
+      'IN',
+      'AUTO',
+    );
+    expect(partial.aqiValue).toBe(64);
+    expect(partial.dominantPollutant).toBe('PM2.5');
+    const no2Detail = partial.pollutantSubIndices.find((p) => p.pollutant === 'NO2');
+    expect(no2Detail?.concentration).toBeNull();
+    expect(no2Detail?.subIndex).toBeNull();
+  });
 });
 
-describe('Open-Meteo Parsing & Thermal Inversion Detector', () => {
+describe('Open-Meteo Parsing, Timezone Formatting & Thermal Inversion Detector', () => {
   it('classifies US AQI categories accurately across bands', () => {
     expect(classifyUsAqi(32)).toBe('Good');
     expect(classifyUsAqi(78)).toBe('Moderate');
@@ -227,9 +310,18 @@ describe('Open-Meteo Parsing & Thermal Inversion Detector', () => {
     expect(detectThermalInversion(18.0, 4.0)).toBe(false);
   });
 
+  it('formats Open-Meteo wall-clock timestamps and UTC ISO strings in local city timezone', () => {
+    expect(formatObservedLocalTime('2026-11-18T14:30', 'Asia/Kolkata', 'IST')).toBe(
+      'Nov 18, 2026, 2:30 PM IST',
+    );
+    expect(formatObservedLocalTime('2026-11-18T09:32:00Z', 'Europe/London', 'GMT')).toBe(
+      'Nov 18, 2026, 9:32 AM GMT',
+    );
+  });
+
   it('parses Open-Meteo geocoding, current air-quality, and current weather payloads cleanly', () => {
     const telemetry = parseOpenMeteoResponses(
-      'Lucknow',
+      'Lucknow, India',
       {
         results: [
           {
@@ -240,10 +332,13 @@ describe('Open-Meteo Parsing & Thermal Inversion Detector', () => {
             latitude: 26.8467,
             longitude: 80.9462,
             population: 2817105,
+            timezone: 'Asia/Kolkata',
           },
         ],
       },
       {
+        timezone: 'Asia/Kolkata',
+        timezone_abbreviation: 'IST',
         current: {
           time: '2026-11-17T08:00',
           us_aqi: 192,
@@ -252,10 +347,12 @@ describe('Open-Meteo Parsing & Thermal Inversion Detector', () => {
           nitrogen_dioxide: 54.6,
           carbon_monoxide: 880,
           ozone: 48.0,
-          sulphur_dioxide: 12.0,
+          sulphur_dioxide: null,
         },
       },
       {
+        timezone: 'Asia/Kolkata',
+        timezone_abbreviation: 'IST',
         current: {
           time: '2026-11-17T08:00',
           temperature_2m: 13.8,
@@ -265,6 +362,7 @@ describe('Open-Meteo Parsing & Thermal Inversion Detector', () => {
       },
     );
 
+    expect(telemetry.cityWithCountry).toBe('Lucknow, India');
     expect(telemetry.resolvedLocation).toBe('Lucknow, Uttar Pradesh, India');
     expect(telemetry.countryCode).toBe('IN');
     expect(telemetry.scaleCode).toBe('IN_CPCB');
@@ -274,14 +372,17 @@ describe('Open-Meteo Parsing & Thermal Inversion Detector', () => {
     expect(telemetry.categoryLabel).toBe('Poor');
     expect(telemetry.dominantPollutant).toBe('PM2.5');
     expect(telemetry.isAutoSelectedScale).toBe(true);
-    expect(telemetry.observedAt).toBe('2026-11-17T08:00');
+    expect(telemetry.observedAt).toBe('Nov 17, 2026, 8:00 AM IST');
     expect(telemetry.telemetrySource).toBe('live');
     expect(telemetry.usAqi).toBe(192);
     expect(telemetry.category).toBe('Unhealthy');
     expect(telemetry.thermalInversionRisk).toBe(true);
     expect(telemetry.pm25).toBe(118.4);
     expect(telemetry.o3).toBe(48.0);
-    expect(telemetry.so2).toBe(12.0);
+    expect(telemetry.so2).toBe(0);
+    expect(
+      telemetry.pollutantSubIndices.find((p) => p.pollutant === 'SO2')?.concentration,
+    ).toBeNull();
   });
 });
 
@@ -296,13 +397,16 @@ describe('Dynamic Parametric Fallback Plan Generator', () => {
   };
 
   const makeTelemetry = (overrides: Partial<AirTelemetry>): AirTelemetry => ({
-    city: 'Pune',
+    city: 'Pune, India',
+    cityWithCountry: 'Pune, India',
     resolvedLocation: 'Pune, Maharashtra, India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 18.52,
     longitude: 73.85,
     timestamp: '2026-11-17T10:00',
-    observedAt: '2026-11-17T10:00',
+    observedAt: 'Nov 17, 2026, 10:00 AM IST',
     usAqi: 42,
     category: 'Good',
     aqiValue: 34,
@@ -313,6 +417,7 @@ describe('Dynamic Parametric Fallback Plan Generator', () => {
     severityTier: 1,
     dominantPollutant: 'PM2.5',
     isAutoSelectedScale: true,
+    pollutantSubIndices: [],
     pm25: 10.2,
     pm10: 22.0,
     no2: 18.5,

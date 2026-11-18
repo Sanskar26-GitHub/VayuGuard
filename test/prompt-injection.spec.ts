@@ -10,13 +10,16 @@ import type { AirTelemetry, HouseholdProfile } from '../src/types/airQuality';
 
 describe('Prompt-Injection Defense & XML Delimiter Wrapping', () => {
   const sampleTelemetry: AirTelemetry = {
-    city: 'Jaipur',
+    city: 'Jaipur, India',
+    cityWithCountry: 'Jaipur, India',
     resolvedLocation: 'Jaipur, Rajasthan, India',
     countryCode: 'IN',
+    timezone: 'Asia/Kolkata',
+    timezoneAbbreviation: 'IST',
     latitude: 26.91,
     longitude: 75.78,
     timestamp: '2026-11-17T08:00',
-    observedAt: '2026-11-17T08:00',
+    observedAt: 'Nov 17, 2026, 8:00 AM IST',
     usAqi: 158,
     category: 'Unhealthy',
     aqiValue: 132,
@@ -27,6 +30,7 @@ describe('Prompt-Injection Defense & XML Delimiter Wrapping', () => {
     severityTier: 3,
     dominantPollutant: 'PM2.5',
     isAutoSelectedScale: true,
+    pollutantSubIndices: [],
     pm25: 69.4,
     pm10: 142.0,
     no2: 41.2,

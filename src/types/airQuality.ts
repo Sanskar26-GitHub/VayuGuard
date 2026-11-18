@@ -50,13 +50,30 @@ export type PillarId =
 export type TelemetrySource = 'open-meteo-live' | 'meteorological-baseline';
 export type TelemetryStatus = 'live' | 'offline-baseline';
 
+export interface PollutantSubIndexDetail {
+  pollutant: 'PM2.5' | 'PM10' | 'NO2' | 'CO' | 'O3' | 'SO2';
+  concentration: number | null;
+  unit: 'µg/m³' | 'mg/m³';
+  subIndex: number | null;
+  isDominant: boolean;
+}
+
+export interface GeocodeOption {
+  label: string;
+  cityWithCountry: string;
+  latitude: number;
+  longitude: number;
+  countryCode: string;
+  timezone: string;
+}
+
 export interface RawPollutants {
-  pm25: number;
-  pm10: number;
-  no2: number;
-  co: number;
-  o3: number;
-  so2: number;
+  pm25: number | null;
+  pm10: number | null;
+  no2: number | null;
+  co: number | null;
+  o3: number | null;
+  so2: number | null;
 }
 
 export interface RegionalAqiResult {
@@ -68,12 +85,16 @@ export interface RegionalAqiResult {
   severityTier: SeverityTier;
   dominantPollutant: string;
   isAutoSelectedScale: boolean;
+  pollutantSubIndices: PollutantSubIndexDetail[];
 }
 
 export interface AirTelemetry {
   city: string;
+  cityWithCountry: string;
   resolvedLocation: string;
   countryCode: string;
+  timezone: string;
+  timezoneAbbreviation: string;
   latitude: number;
   longitude: number;
   timestamp: string;
@@ -88,6 +109,7 @@ export interface AirTelemetry {
   severityTier: SeverityTier;
   dominantPollutant: string;
   isAutoSelectedScale: boolean;
+  pollutantSubIndices: PollutantSubIndexDetail[];
   pm25: number;
   pm10: number;
   no2: number;
@@ -113,6 +135,17 @@ export interface HouseholdProfile {
   sensitiveGroups: SensitiveGroup[];
   lifestyleNotes?: string;
   scaleOverride?: ScaleOverride;
+}
+
+export interface HouseholdFormDraft {
+  city: string;
+  ventilationType: VentilationType | '';
+  hasAirPurifier: '' | 'yes' | 'no';
+  cookingFuel: CookingFuel | '';
+  commuteMode: CommuteMode | '';
+  sensitiveGroups: SensitiveGroup[];
+  lifestyleNotes: string;
+  scaleOverride: ScaleOverride;
 }
 
 export interface WhyAndDirectImpact {

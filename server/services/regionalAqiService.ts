@@ -1,4 +1,5 @@
 import type {
+  PollutantSubIndexDetail,
   RawPollutants,
   RegionalAqiResult,
   RegionalScaleCode,
@@ -25,6 +26,10 @@ interface BreakpointBand {
   cHi: number;
   iLo: number;
   iHi: number;
+}
+
+function isValidNumber(val: number | null | undefined): val is number {
+  return typeof val === 'number' && Number.isFinite(val);
 }
 
 function interpolateLinearSubIndex(
@@ -67,16 +72,52 @@ export function resolveRegionalScaleForCountry(countryCode: string): RegionalSca
   return 'US_EPA';
 }
 
-function pickDominantSubIndex(
-  entries: Array<{ pollutant: string; index: number }>,
-): { pollutant: string; index: number } {
-  let winner = entries[0];
-  for (const item of entries) {
-    if (item.index > winner.index) {
-      winner = item;
+function buildPollutantBreakdown(
+  raw: RawPollutants,
+  subIndexMap: Partial<Record<PollutantSubIndexDetail['pollutant'], number | null>>,
+): { winner: { pollutant: string; index: number }; pollutantSubIndices: PollutantSubIndexDetail[] } {
+  const orderedPollutants: Array<{
+    pollutant: PollutantSubIndexDetail['pollutant'];
+    concentration: number | null;
+    unit: 'µg/m³' | 'mg/m³';
+  }> = [
+    { pollutant: 'PM2.5', concentration: isValidNumber(raw.pm25) ? Number(raw.pm25.toFixed(1)) : null, unit: 'µg/m³' },
+    { pollutant: 'PM10', concentration: isValidNumber(raw.pm10) ? Number(raw.pm10.toFixed(1)) : null, unit: 'µg/m³' },
+    { pollutant: 'NO2', concentration: isValidNumber(raw.no2) ? Number(raw.no2.toFixed(1)) : null, unit: 'µg/m³' },
+    {
+      pollutant: 'CO',
+      concentration: isValidNumber(raw.co) ? Number((raw.co / 1000).toFixed(3)) : null,
+      unit: 'mg/m³',
+    },
+    { pollutant: 'O3', concentration: isValidNumber(raw.o3) ? Number(raw.o3.toFixed(1)) : null, unit: 'µg/m³' },
+    { pollutant: 'SO2', concentration: isValidNumber(raw.so2) ? Number(raw.so2.toFixed(1)) : null, unit: 'µg/m³' },
+  ];
+
+  let winner: { pollutant: string; index: number } | null = null;
+  for (const entry of orderedPollutants) {
+    const idx = subIndexMap[entry.pollutant];
+    if (isValidNumber(idx)) {
+      if (!winner || idx > winner.index) {
+        winner = { pollutant: entry.pollutant, index: idx };
+      }
     }
   }
-  return winner;
+
+  const resolvedWinner = winner ?? { pollutant: 'PM2.5', index: 0 };
+
+  const pollutantSubIndices: PollutantSubIndexDetail[] = orderedPollutants.map((entry) => {
+    const idx = subIndexMap[entry.pollutant];
+    const subIndex = isValidNumber(idx) ? idx : null;
+    return {
+      pollutant: entry.pollutant,
+      concentration: entry.concentration,
+      unit: entry.unit,
+      subIndex,
+      isDominant: subIndex !== null && entry.pollutant === resolvedWinner.pollutant,
+    };
+  });
+
+  return { winner: resolvedWinner, pollutantSubIndices };
 }
 
 // ---------------- INDIA NAQI (CPCB 0–500) ----------------
@@ -191,6 +232,16 @@ const US_CO_PPM_BANDS: BreakpointBand[] = [
   { cLo: 12.4, cHi: 15.4, iLo: 151, iHi: 200 },
   { cLo: 15.4, cHi: 30.4, iLo: 201, iHi: 300 },
   { cLo: 30.4, cHi: 50.4, iLo: 301, iHi: 500 },
+];
+
+// US SO2 1h in ppb (1 ppb ≈ 2.62 µg/m³)
+const US_SO2_PPB_BANDS: BreakpointBand[] = [
+  { cLo: 0, cHi: 35, iLo: 0, iHi: 50 },
+  { cLo: 35, cHi: 75, iLo: 51, iHi: 100 },
+  { cLo: 75, cHi: 185, iLo: 101, iHi: 150 },
+  { cLo: 185, cHi: 304, iLo: 151, iHi: 200 },
+  { cLo: 304, cHi: 604, iLo: 201, iHi: 300 },
+  { cLo: 604, cHi: 1004, iLo: 301, iHi: 500 },
 ];
 
 function classifyUsEpa(aqi: number): { label: string; tier: SeverityTier } {
@@ -315,6 +366,18 @@ const UK_O3_STEPS = [
   { max: 240, value: 9 },
 ];
 
+const UK_SO2_STEPS = [
+  { max: 88, value: 1 },
+  { max: 177, value: 2 },
+  { max: 266, value: 3 },
+  { max: 354, value: 4 },
+  { max: 443, value: 5 },
+  { max: 532, value: 6 },
+  { max: 710, value: 7 },
+  { max: 887, value: 8 },
+  { max: 1064, value: 9 },
+];
+
 function classifyUkDaqi(daqi: number): { label: string; tier: SeverityTier } {
   if (daqi <= 3) return { label: 'Low', tier: 1 };
   if (daqi <= 6) return { label: 'Moderate', tier: 3 };
@@ -381,9 +444,9 @@ function classifyEuEaqi(eaqi: number): { label: string; tier: SeverityTier } {
 }
 
 /**
- * Computes the official regional Air Quality Index directly from live raw pollutant
- * concentrations using linear sub-index interpolation (or discrete threshold lookup for UK/EU)
- * and selecting the dominant (worst) pollutant sub-index.
+ * Computes the official regional Air Quality Index directly from available non-null live raw
+ * pollutant concentrations using linear sub-index interpolation (or discrete threshold lookup
+ * for UK/EU) and selecting the dominant (worst) pollutant sub-index.
  */
 export function computeRegionalAqi(
   pollutants: RawPollutants,
@@ -396,15 +459,26 @@ export function computeRegionalAqi(
   const scaleName = REGIONAL_SCALE_NAMES[scaleCode];
 
   if (scaleCode === 'IN_CPCB') {
-    const coMg = pollutants.co / 1000;
-    const winner = pickDominantSubIndex([
-      { pollutant: 'PM2.5', index: interpolateLinearSubIndex(pollutants.pm25, IN_PM25_BANDS, 500) },
-      { pollutant: 'PM10', index: interpolateLinearSubIndex(pollutants.pm10, IN_PM10_BANDS, 500) },
-      { pollutant: 'NO2', index: interpolateLinearSubIndex(pollutants.no2, IN_NO2_BANDS, 500) },
-      { pollutant: 'CO', index: interpolateLinearSubIndex(coMg, IN_CO_MG_BANDS, 500) },
-      { pollutant: 'O3', index: interpolateLinearSubIndex(pollutants.o3, IN_O3_BANDS, 500) },
-      { pollutant: 'SO2', index: interpolateLinearSubIndex(pollutants.so2, IN_SO2_BANDS, 500) },
-    ]);
+    const { winner, pollutantSubIndices } = buildPollutantBreakdown(pollutants, {
+      'PM2.5': isValidNumber(pollutants.pm25)
+        ? interpolateLinearSubIndex(pollutants.pm25, IN_PM25_BANDS, 500)
+        : null,
+      PM10: isValidNumber(pollutants.pm10)
+        ? interpolateLinearSubIndex(pollutants.pm10, IN_PM10_BANDS, 500)
+        : null,
+      NO2: isValidNumber(pollutants.no2)
+        ? interpolateLinearSubIndex(pollutants.no2, IN_NO2_BANDS, 500)
+        : null,
+      CO: isValidNumber(pollutants.co)
+        ? interpolateLinearSubIndex(pollutants.co / 1000, IN_CO_MG_BANDS, 500)
+        : null,
+      O3: isValidNumber(pollutants.o3)
+        ? interpolateLinearSubIndex(pollutants.o3, IN_O3_BANDS, 500)
+        : null,
+      SO2: isValidNumber(pollutants.so2)
+        ? interpolateLinearSubIndex(pollutants.so2, IN_SO2_BANDS, 500)
+        : null,
+    });
     const { label, tier } = classifyIndiaNaqi(winner.index);
     return {
       aqiValue: winner.index,
@@ -415,19 +489,31 @@ export function computeRegionalAqi(
       severityTier: tier,
       dominantPollutant: winner.pollutant,
       isAutoSelectedScale,
+      pollutantSubIndices,
     };
   }
 
   if (scaleCode === 'CN_MEE') {
-    const coMg = pollutants.co / 1000;
-    const winner = pickDominantSubIndex([
-      { pollutant: 'PM2.5', index: interpolateLinearSubIndex(pollutants.pm25, CN_PM25_BANDS, 500) },
-      { pollutant: 'PM10', index: interpolateLinearSubIndex(pollutants.pm10, CN_PM10_BANDS, 500) },
-      { pollutant: 'NO2', index: interpolateLinearSubIndex(pollutants.no2, CN_NO2_BANDS, 500) },
-      { pollutant: 'O3', index: interpolateLinearSubIndex(pollutants.o3, CN_O3_BANDS, 500) },
-      { pollutant: 'CO', index: interpolateLinearSubIndex(coMg, CN_CO_MG_BANDS, 500) },
-      { pollutant: 'SO2', index: interpolateLinearSubIndex(pollutants.so2, CN_SO2_BANDS, 500) },
-    ]);
+    const { winner, pollutantSubIndices } = buildPollutantBreakdown(pollutants, {
+      'PM2.5': isValidNumber(pollutants.pm25)
+        ? interpolateLinearSubIndex(pollutants.pm25, CN_PM25_BANDS, 500)
+        : null,
+      PM10: isValidNumber(pollutants.pm10)
+        ? interpolateLinearSubIndex(pollutants.pm10, CN_PM10_BANDS, 500)
+        : null,
+      NO2: isValidNumber(pollutants.no2)
+        ? interpolateLinearSubIndex(pollutants.no2, CN_NO2_BANDS, 500)
+        : null,
+      CO: isValidNumber(pollutants.co)
+        ? interpolateLinearSubIndex(pollutants.co / 1000, CN_CO_MG_BANDS, 500)
+        : null,
+      O3: isValidNumber(pollutants.o3)
+        ? interpolateLinearSubIndex(pollutants.o3, CN_O3_BANDS, 500)
+        : null,
+      SO2: isValidNumber(pollutants.so2)
+        ? interpolateLinearSubIndex(pollutants.so2, CN_SO2_BANDS, 500)
+        : null,
+    });
     const { label, tier } = classifyChinaMee(winner.index);
     return {
       aqiValue: winner.index,
@@ -438,16 +524,29 @@ export function computeRegionalAqi(
       severityTier: tier,
       dominantPollutant: winner.pollutant,
       isAutoSelectedScale,
+      pollutantSubIndices,
     };
   }
 
   if (scaleCode === 'UK_DAQI') {
-    const winner = pickDominantSubIndex([
-      { pollutant: 'PM2.5', index: stepBandLookup(pollutants.pm25, UK_PM25_STEPS, 10) },
-      { pollutant: 'PM10', index: stepBandLookup(pollutants.pm10, UK_PM10_STEPS, 10) },
-      { pollutant: 'NO2', index: stepBandLookup(pollutants.no2, UK_NO2_STEPS, 10) },
-      { pollutant: 'O3', index: stepBandLookup(pollutants.o3, UK_O3_STEPS, 10) },
-    ]);
+    const { winner, pollutantSubIndices } = buildPollutantBreakdown(pollutants, {
+      'PM2.5': isValidNumber(pollutants.pm25)
+        ? stepBandLookup(pollutants.pm25, UK_PM25_STEPS, 10)
+        : null,
+      PM10: isValidNumber(pollutants.pm10)
+        ? stepBandLookup(pollutants.pm10, UK_PM10_STEPS, 10)
+        : null,
+      NO2: isValidNumber(pollutants.no2)
+        ? stepBandLookup(pollutants.no2, UK_NO2_STEPS, 10)
+        : null,
+      CO: null, // UK DAQI does not index CO
+      O3: isValidNumber(pollutants.o3)
+        ? stepBandLookup(pollutants.o3, UK_O3_STEPS, 10)
+        : null,
+      SO2: isValidNumber(pollutants.so2)
+        ? stepBandLookup(pollutants.so2, UK_SO2_STEPS, 10)
+        : null,
+    });
     const { label, tier } = classifyUkDaqi(winner.index);
     return {
       aqiValue: winner.index,
@@ -458,17 +557,29 @@ export function computeRegionalAqi(
       severityTier: tier,
       dominantPollutant: winner.pollutant,
       isAutoSelectedScale,
+      pollutantSubIndices,
     };
   }
 
   if (scaleCode === 'EU_EAQI') {
-    const winner = pickDominantSubIndex([
-      { pollutant: 'PM2.5', index: stepBandLookup(pollutants.pm25, EU_PM25_STEPS, 6) },
-      { pollutant: 'PM10', index: stepBandLookup(pollutants.pm10, EU_PM10_STEPS, 6) },
-      { pollutant: 'NO2', index: stepBandLookup(pollutants.no2, EU_NO2_STEPS, 6) },
-      { pollutant: 'O3', index: stepBandLookup(pollutants.o3, EU_O3_STEPS, 6) },
-      { pollutant: 'SO2', index: stepBandLookup(pollutants.so2, EU_SO2_STEPS, 6) },
-    ]);
+    const { winner, pollutantSubIndices } = buildPollutantBreakdown(pollutants, {
+      'PM2.5': isValidNumber(pollutants.pm25)
+        ? stepBandLookup(pollutants.pm25, EU_PM25_STEPS, 6)
+        : null,
+      PM10: isValidNumber(pollutants.pm10)
+        ? stepBandLookup(pollutants.pm10, EU_PM10_STEPS, 6)
+        : null,
+      NO2: isValidNumber(pollutants.no2)
+        ? stepBandLookup(pollutants.no2, EU_NO2_STEPS, 6)
+        : null,
+      CO: null, // EU EAQI does not index CO
+      O3: isValidNumber(pollutants.o3)
+        ? stepBandLookup(pollutants.o3, EU_O3_STEPS, 6)
+        : null,
+      SO2: isValidNumber(pollutants.so2)
+        ? stepBandLookup(pollutants.so2, EU_SO2_STEPS, 6)
+        : null,
+    });
     const { label, tier } = classifyEuEaqi(winner.index);
     return {
       aqiValue: winner.index,
@@ -479,20 +590,31 @@ export function computeRegionalAqi(
       severityTier: tier,
       dominantPollutant: winner.pollutant,
       isAutoSelectedScale,
+      pollutantSubIndices,
     };
   }
 
   // US_EPA (Default & US)
-  const no2Ppb = pollutants.no2 / 1.88;
-  const o3Ppb = pollutants.o3 / 1.96;
-  const coPpm = pollutants.co / 1145;
-  const winner = pickDominantSubIndex([
-    { pollutant: 'PM2.5', index: interpolateLinearSubIndex(pollutants.pm25, US_PM25_BANDS, 500) },
-    { pollutant: 'PM10', index: interpolateLinearSubIndex(pollutants.pm10, US_PM10_BANDS, 500) },
-    { pollutant: 'NO2', index: interpolateLinearSubIndex(no2Ppb, US_NO2_PPB_BANDS, 500) },
-    { pollutant: 'O3', index: interpolateLinearSubIndex(o3Ppb, US_O3_PPB_BANDS, 500) },
-    { pollutant: 'CO', index: interpolateLinearSubIndex(coPpm, US_CO_PPM_BANDS, 500) },
-  ]);
+  const { winner, pollutantSubIndices } = buildPollutantBreakdown(pollutants, {
+    'PM2.5': isValidNumber(pollutants.pm25)
+      ? interpolateLinearSubIndex(pollutants.pm25, US_PM25_BANDS, 500)
+      : null,
+    PM10: isValidNumber(pollutants.pm10)
+      ? interpolateLinearSubIndex(pollutants.pm10, US_PM10_BANDS, 500)
+      : null,
+    NO2: isValidNumber(pollutants.no2)
+      ? interpolateLinearSubIndex(pollutants.no2 / 1.88, US_NO2_PPB_BANDS, 500)
+      : null,
+    CO: isValidNumber(pollutants.co)
+      ? interpolateLinearSubIndex(pollutants.co / 1145, US_CO_PPM_BANDS, 500)
+      : null,
+    O3: isValidNumber(pollutants.o3)
+      ? interpolateLinearSubIndex(pollutants.o3 / 1.96, US_O3_PPB_BANDS, 500)
+      : null,
+    SO2: isValidNumber(pollutants.so2)
+      ? interpolateLinearSubIndex(pollutants.so2 / 2.62, US_SO2_PPB_BANDS, 500)
+      : null,
+  });
   const { label, tier } = classifyUsEpa(winner.index);
   return {
     aqiValue: winner.index,
@@ -503,5 +625,6 @@ export function computeRegionalAqi(
     severityTier: tier,
     dominantPollutant: winner.pollutant,
     isAutoSelectedScale,
+    pollutantSubIndices,
   };
 }
