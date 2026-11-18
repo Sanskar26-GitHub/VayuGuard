@@ -7,12 +7,19 @@ import { fileURLToPath } from 'url';
 import { apiRouter } from './server/routes/api';
 import { sanitizeGeminiError } from './server/config/gemini';
 import { ValidationError } from './server/services/sanitizationService';
+import { logger } from './server/utils/logger';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Constructs and configures the VayuGuard Express application with CORS, 32 KB JSON limit,
+ * API routing, and sanitized centralized error handling.
+ *
+ * @returns Configured Express application instance.
+ */
 export function createExpressApp() {
   const app = express();
 
@@ -39,7 +46,7 @@ export function createExpressApp() {
       return;
     }
 
-    console.error('[VayuGuard] Server error:', sanitizeGeminiError(err));
+    logger.error('Unhandled API server error', err);
     res.status(500).json({ error: 'Unable to process air-quality request right now.' });
   });
 
@@ -73,7 +80,7 @@ async function startServer() {
   }
 
   httpServer.listen(port, '0.0.0.0', () => {
-    console.log(`VayuGuard server listening on http://0.0.0.0:${port}`);
+    logger.info('VayuGuard server listening', { port, mode: isProd ? 'production' : 'development' });
   });
 }
 
@@ -82,7 +89,7 @@ const isDirectExecution =
   process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
 if (isDirectExecution) {
   startServer().catch((err) => {
-    console.error('Failed to start VayuGuard server:', sanitizeGeminiError(err));
+    logger.error('Failed to start VayuGuard server', sanitizeGeminiError(err));
     process.exit(1);
   });
 }

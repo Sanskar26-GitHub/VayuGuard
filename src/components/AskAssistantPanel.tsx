@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Loader2, MessageSquare, Send } from 'lucide-react';
+import { useAssistantQuery } from '../hooks/useActionPlan';
 import { ACCESSIBLE_SURFACES } from '../styles/accessibleTheme';
-import type {
-  AirTelemetry,
-  AskAssistantResponse,
-  HouseholdProfile,
-} from '../types/airQuality';
+import type { AirTelemetry, HouseholdProfile } from '../types/airQuality';
 import { ErrorAlertBanner } from './ErrorBoundary';
 
-interface AskAssistantPanelProps {
+/**
+ * Props for {@link AskAssistantPanel}.
+ */
+export interface AskAssistantPanelProps {
   profile: HouseholdProfile | null;
   telemetry: AirTelemetry | null;
 }
@@ -19,52 +19,30 @@ const SUGGESTED_QUESTIONS = [
   'How should we vent kitchen cooking smoke without letting smog in?',
 ] as const;
 
+/**
+ * Situational Q&A panel grounded in the user's household setup and live regional AQI telemetry.
+ *
+ * @param props - Active household profile and environmental telemetry snapshot.
+ * @returns Grounded assistant Q&A section, or `null` when no telemetry is loaded.
+ */
 export function AskAssistantPanel({ profile, telemetry }: AskAssistantPanelProps) {
-  const [question, setQuestion] = useState('');
-  const [isAsking, setIsAsking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [answerData, setAnswerData] = useState<AskAssistantResponse | null>(null);
+  const {
+    question,
+    isAsking,
+    askError,
+    answerData,
+    setQuestion,
+    clearAskError,
+    submitQuestion,
+  } = useAssistantQuery();
 
   if (!telemetry || !profile) {
     return null;
   }
 
-  const submitQuestion = async (textToAsk: string) => {
-    const trimmed = textToAsk.trim();
-    if (trimmed.length < 3) {
-      setError('Please enter a question of at least 3 characters.');
-      return;
-    }
-
-    setError(null);
-    setIsAsking(true);
-    try {
-      const response = await fetch('/api/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: trimmed,
-          profile,
-          telemetry,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.error || 'Unable to get an assistant response.');
-      }
-
-      setAnswerData(data as AskAssistantResponse);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to reach the assistant.');
-    } finally {
-      setIsAsking(false);
-    }
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    void submitQuestion(question);
+    void submitQuestion(question, profile, telemetry);
   };
 
   return (
@@ -95,7 +73,7 @@ export function AskAssistantPanel({ profile, telemetry }: AskAssistantPanelProps
             disabled={isAsking}
             onClick={() => {
               setQuestion(prompt);
-              void submitQuestion(prompt);
+              void submitQuestion(prompt, profile, telemetry);
             }}
             className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-left text-xs font-medium text-slate-800 transition-colors hover:bg-slate-100 disabled:opacity-60"
           >
@@ -140,9 +118,9 @@ export function AskAssistantPanel({ profile, telemetry }: AskAssistantPanelProps
         </button>
       </form>
 
-      {error && (
+      {askError && (
         <div className="mt-4">
-          <ErrorAlertBanner message={error} onDismiss={() => setError(null)} />
+          <ErrorAlertBanner message={askError} onDismiss={clearAskError} />
         </div>
       )}
 

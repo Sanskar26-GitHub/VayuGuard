@@ -7,8 +7,12 @@ import type {
   VentilationType,
 } from '../types/airQuality';
 import { computeCommunityImpact } from '../utils/impactMath';
+import { ImpactCharts, type PillarCo2Bar } from './ImpactCharts';
 
-interface ImpactSimulatorProps {
+/**
+ * Props for {@link ImpactSimulator}.
+ */
+export interface ImpactSimulatorProps {
   recommendations: RecommendationCardData[];
   adoptedIds: ReadonlySet<string>;
   householdScale: number;
@@ -27,6 +31,14 @@ const SCALE_PRESETS = [
   { label: '1,000 District', value: 1000 },
 ] as const;
 
+/**
+ * Interactive 100% client-side Family & Community Impact Simulator calculating
+ * monthly CO2e savings, indoor PM2.5 reductions, and urban tree equivalents across
+ * 1 to 1,000 community households.
+ *
+ * @param props - Recommendations, adopted IDs, household scale, and environmental telemetry.
+ * @returns Interactive simulator section, or `null` before a plan is generated.
+ */
 export function ImpactSimulator({
   recommendations,
   adoptedIds,
@@ -51,7 +63,6 @@ export function ImpactSimulator({
     hasAirPurifier,
   );
 
-  // Pillar CO2e breakdown for SVG Chart 2
   const pillarTotals: Record<PillarId, number> = {
     low_emission_routines: 0,
     iaq_hacks: 0,
@@ -64,19 +75,7 @@ export function ImpactSimulator({
     }
   }
 
-  const maxPm25Scale = Math.max(impact.baselineIndoorPm25, 35);
-  const baselineBarPct = Math.min(100, (impact.baselineIndoorPm25 / maxPm25Scale) * 100);
-  const postActionBarPct = Math.min(100, (impact.estimatedIndoorPm25AfterAction / maxPm25Scale) * 100);
-  const whoGuidelinePct = Math.min(100, (15 / maxPm25Scale) * 100);
-
-  const maxPillarCo2 = Math.max(
-    1,
-    pillarTotals.low_emission_routines,
-    pillarTotals.iaq_hacks,
-    pillarTotals.sustainable_alternatives,
-  );
-
-  const pillarBars: Array<{ label: string; value: number; color: string }> = [
+  const pillarBars: PillarCo2Bar[] = [
     {
       label: 'Daily Routines',
       value: Number(pillarTotals.low_emission_routines.toFixed(1)),
@@ -132,7 +131,6 @@ export function ImpactSimulator({
         </div>
       </div>
 
-      {/* Scale slider + presets */}
       <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <label
@@ -142,7 +140,8 @@ export function ImpactSimulator({
             <Users className="h-4 w-4 text-[#0F4C81]" aria-hidden="true" />
             <span>Neighborhood Adoption Scale:</span>
             <span className="font-mono text-base font-bold text-[#0F4C81] tabular-nums">
-              {impact.householdScale.toLocaleString()} {impact.householdScale === 1 ? 'household' : 'households'}
+              {impact.householdScale.toLocaleString()}{' '}
+              {impact.householdScale === 1 ? 'household' : 'households'}
             </span>
           </label>
 
@@ -187,7 +186,6 @@ export function ImpactSimulator({
         </div>
       </div>
 
-      {/* 4 key numeric outputs */}
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <p className="text-xs font-semibold text-slate-600">Actions Adopted</p>
@@ -232,155 +230,7 @@ export function ImpactSimulator({
         </div>
       </div>
 
-      {/* Accessible SVG Comparison Charts */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        {/* SVG Chart 1: Indoor PM2.5 Comparison */}
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <h3 className="text-sm font-bold text-slate-900">
-            Estimated Indoor PM2.5 Exposure (µg/m³)
-          </h3>
-          <p className="mt-0.5 text-xs text-slate-600">
-            Compares unmitigated indoor infiltration against adopted household controls.
-          </p>
-
-          <svg
-            role="img"
-            aria-label={`Indoor PM2.5 comparison: baseline ${impact.baselineIndoorPm25} micrograms per cubic meter, after actions ${impact.estimatedIndoorPm25AfterAction} micrograms per cubic meter, WHO 24-hour guideline 15 micrograms per cubic meter.`}
-            viewBox="0 0 420 155"
-            className="mt-3 w-full overflow-visible"
-          >
-            <title>Indoor PM2.5 Exposure Comparison Chart</title>
-            <desc>
-              Horizontal bar chart comparing baseline indoor PM2.5, post-action indoor PM2.5, and WHO 24-hour guideline.
-            </desc>
-
-            {/* Baseline */}
-            <text x="0" y="22" className="fill-slate-800 text-[12px] font-semibold">
-              Baseline Indoor
-            </text>
-            <rect x="130" y="10" width="210" height="18" rx="4" className="fill-slate-200" />
-            <rect
-              x="130"
-              y="10"
-              width={Math.max(4, (baselineBarPct / 100) * 210)}
-              height="18"
-              rx="4"
-              fill="#991B1B"
-            />
-            <text
-              x="348"
-              y="23"
-              className="fill-slate-900 font-mono text-[12px] font-bold"
-            >
-              {impact.baselineIndoorPm25} µg/m³
-            </text>
-
-            {/* With Adopted Actions */}
-            <text x="0" y="68" className="fill-slate-800 text-[12px] font-semibold">
-              With Adopted Plan
-            </text>
-            <rect x="130" y="56" width="210" height="18" rx="4" className="fill-slate-200" />
-            <rect
-              x="130"
-              y="56"
-              width={Math.max(4, (postActionBarPct / 100) * 210)}
-              height="18"
-              rx="4"
-              fill="#065F46"
-            />
-            <text
-              x="348"
-              y="69"
-              className="fill-[#065F46] font-mono text-[12px] font-bold"
-            >
-              {impact.estimatedIndoorPm25AfterAction} µg/m³
-            </text>
-
-            {/* WHO 24h Guideline */}
-            <text x="0" y="114" className="fill-slate-700 text-[12px] font-medium">
-              WHO 24h Target
-            </text>
-            <rect x="130" y="102" width="210" height="18" rx="4" className="fill-slate-200" />
-            <rect
-              x="130"
-              y="102"
-              width={Math.max(4, (whoGuidelinePct / 100) * 210)}
-              height="18"
-              rx="4"
-              fill="#0F4C81"
-            />
-            <text
-              x="348"
-              y="115"
-              className="fill-[#0F4C81] font-mono text-[12px] font-semibold"
-            >
-              15.0 µg/m³
-            </text>
-          </svg>
-        </div>
-
-        {/* SVG Chart 2: Monthly Community CO2e Savings by Pillar */}
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <h3 className="text-sm font-bold text-slate-900">
-            Monthly CO2e Avoided by Pillar (kg/month)
-          </h3>
-          <p className="mt-0.5 text-xs text-slate-600">
-            Scaled to {impact.householdScale.toLocaleString()}{' '}
-            {impact.householdScale === 1 ? 'household' : 'households'}.
-          </p>
-
-          <svg
-            role="img"
-            aria-label={`Monthly CO2e avoided by pillar for ${impact.householdScale} households: Daily Routines ${pillarBars[0].value} kg, IAQ Hacks ${pillarBars[1].value} kg, Clean Alternatives ${pillarBars[2].value} kg.`}
-            viewBox="0 0 420 155"
-            className="mt-3 w-full overflow-visible"
-          >
-            <title>Monthly Community CO2e Savings by Pillar</title>
-            <desc>
-              Horizontal bar chart comparing monthly CO2e saved across the three VayuGuard pillars.
-            </desc>
-
-            {pillarBars.map((bar, idx) => {
-              const yLabel = 22 + idx * 46;
-              const yRect = 10 + idx * 46;
-              const barWidth =
-                bar.value <= 0 ? 0 : Math.max(6, (bar.value / maxPillarCo2) * 210);
-              return (
-                <g key={bar.label}>
-                  <text x="0" y={yLabel} className="fill-slate-800 text-[12px] font-semibold">
-                    {bar.label}
-                  </text>
-                  <rect
-                    x="130"
-                    y={yRect}
-                    width="210"
-                    height="18"
-                    rx="4"
-                    className="fill-slate-200"
-                  />
-                  {barWidth > 0 && (
-                    <rect
-                      x="130"
-                      y={yRect}
-                      width={barWidth}
-                      height="18"
-                      rx="4"
-                      fill={bar.color}
-                    />
-                  )}
-                  <text
-                    x="348"
-                    y={yLabel + 1}
-                    className="fill-slate-900 font-mono text-[12px] font-bold"
-                  >
-                    {bar.value.toLocaleString()} kg
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-      </div>
+      <ImpactCharts impact={impact} pillarBars={pillarBars} />
     </section>
   );
 }

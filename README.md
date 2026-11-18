@@ -82,22 +82,93 @@ Passively refreshing Air Quality Index (AQI) apps every ten minutes neither lowe
 
 ---
 
-## Running Locally & Verification
+## Project Structure
+
+```
+.
+├── eslint.config.js                      # ESLint v9 flat config (strict TS & type-imports rules)
+├── server.ts                             # Express + Vite middleware entrypoint (port 3000)
+├── server/
+│   ├── config/
+│   │   └── gemini.ts                     # @google/genai client, model fallback & error sanitization
+│   ├── constants/
+│   │   └── aqiBreakpoints.ts             # Regional AQI breakpoint tables & offline baselines
+│   ├── prompts/
+│   │   └── airQualityPrompt.ts           # Structured responseSchema & XML prompt-injection boundaries
+│   ├── routes/
+│   │   └── api.ts                        # /api/health, /api/geocode, /api/air-quality, /api/plan, /api/ask
+│   ├── services/
+│   │   ├── cacheService.ts               # Bounded SHA-256 LRU cache (250 items / 2 MiB)
+│   │   ├── fallbackPlanService.ts        # Severity-tier parametric action & Q&A fallback
+│   │   ├── geocodingService.ts           # "City, Country" parsing, country hints & population ranking
+│   │   ├── groundingService.ts           # Physical bounds clamping & telemetry citation verification
+│   │   ├── regionalAqiService.ts         # Unified interpolateSubIndex regional AQI scale engine
+│   │   ├── sanitizationService.ts        # Control-char stripping, XML escaping & payload validation
+│   │   └── weatherAirService.ts          # Open-Meteo current= AQ/weather fetch & thermal inversion detector
+│   └── utils/
+│       ├── httpClient.ts                 # Shared AbortController timeout & retry JSON client
+│       └── logger.ts                     # Structured redacting server logger
+├── src/
+│   ├── App.tsx                           # Top-level workspace layout composing hooks & components
+│   ├── components/
+│   │   ├── ActionPlanSection.tsx         # Filterable 3-pillar daily action plan section
+│   │   ├── AirTelemetryBanner.tsx        # Live AQI, weather, coordinates & regional scale switcher
+│   │   ├── AskAssistantPanel.tsx         # Grounded situational Q&A panel
+│   │   ├── CityAutocompleteInput.tsx     # Accessible role="combobox" city autocomplete & presets
+│   │   ├── EmptyWorkspaceCard.tsx        # 3-step onboarding card before plan submission
+│   │   ├── ErrorBoundary.tsx             # React error recovery & WCAG AA error alert banner
+│   │   ├── FormSelectField.tsx           # Reusable accessible select control with validation
+│   │   ├── ImpactCharts.tsx              # Accessible inline SVG PM2.5 and CO2e comparison charts
+│   │   ├── ImpactSimulator.tsx           # Client-side household/community impact simulator
+│   │   ├── LifestyleForm.tsx             # Household ventilation, fuel, commute & sensitivity form
+│   │   ├── Navbar.tsx                    # Sticky accessible header navigation with skip link
+│   │   ├── PollutantBreakdownDrawer.tsx  # Collapsible raw pollutant sub-index verification table
+│   │   ├── RecommendationCard.tsx        # Keyboard-accessible action card with impact breakdown
+│   │   └── TelemetryMetricGrid.tsx       # 6-card live pollutant & weather telemetry grid
+│   ├── constants/
+│   │   └── formOptions.ts                # Typed household form & sensitivity group options
+│   ├── hooks/
+│   │   ├── useActionPlan.ts              # Plan generation, simulator adoption & Q&A state hooks
+│   │   └── useAirTelemetry.ts            # City telemetry preview & AQI scale-switching hook
+│   ├── services/
+│   │   └── apiClient.ts                  # Typed frontend API client with AbortSignal & error parsing
+│   ├── styles/
+│   │   └── accessibleTheme.ts            # WCAG 2.1 AA/AAA luminance-verified palette tokens
+│   ├── types/
+│   │   └── airQuality.ts                 # Shared TypeScript domain contracts
+│   └── utils/
+│       ├── formatters.ts                 # Local observation timezone & hemisphere coordinate formatters
+│       └── impactMath.ts                 # Deterministic indoor PM2.5 & community CO2e simulator math
+└── test/
+    ├── backend.spec.ts                   # Sanitization, LRU cache, regional AQI & Open-Meteo parser tests
+    ├── formatters.spec.ts                # Timezone observation & hemisphere coordinate formatter tests
+    ├── frontend.spec.tsx                 # Contrast ratios, empty initial state, validation & ARIA tests
+    ├── geocoding.spec.ts                 # City/Country parsing, country matching & sub-index tests
+    ├── grounding.spec.ts                 # Physical bounds clamping & impact simulator tests
+    └── prompt-injection.spec.ts          # XML escaping & untrusted delimiter isolation tests
+```
+
+---
+
+## Running Locally & Quality Gates
 
 1. Configure `.env` from `.env.example`:
    ```bash
    cp .env.example .env
    ```
-2. Install dependencies and run the test suite:
+2. Install dependencies:
    ```bash
    npm install
-   npm test
    ```
 3. Run development server (Express + Vite middleware on port 3000):
    ```bash
    npm run dev
    ```
-4. Build and type-check production bundle:
+4. Run automated quality gates (ESLint + strict TypeScript check, Vitest suite, and Vite production build):
    ```bash
-   npm run lint && npm run build
+   npm run lint
+   npm run typecheck
+   npm test
+   npm run build
    ```
+

@@ -66,11 +66,13 @@ export function sanitizeScaleOverride(raw: unknown): ScaleOverride {
  * to neutralize hidden control sequences or terminal/prompt delimiters.
  */
 export function stripControlChars(input: string): string {
-  // Remove C0/C1 control chars except space, normalize runs of whitespace
-  return input
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  let cleaned = '';
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    const isControl = (code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+    cleaned += isControl ? ' ' : input[i];
+  }
+  return cleaned.replace(/\s+/g, ' ').trim();
 }
 
 /**

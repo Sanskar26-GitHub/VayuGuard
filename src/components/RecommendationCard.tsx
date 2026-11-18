@@ -3,12 +3,22 @@ import { CheckSquare, Info, Square } from 'lucide-react';
 import { ACCESSIBLE_SURFACES } from '../styles/accessibleTheme';
 import type { RecommendationCardData } from '../types/airQuality';
 
-interface RecommendationCardProps {
+/**
+ * Props for {@link RecommendationCard}.
+ */
+export interface RecommendationCardProps {
   recommendation: RecommendationCardData;
   adopted: boolean;
   onToggleAdopt: (id: string) => void;
 }
 
+/**
+ * Action recommendation card displaying pillar metadata, keyboard-accessible adoption
+ * checkbox, scientific mechanism, quantified PM2.5/CO2e impacts, and grounded telemetry reference.
+ *
+ * @param props - Recommendation data, adoption flag, and toggle callback.
+ * @returns Accessible recommendation `<article>` card.
+ */
 export function RecommendationCard({
   recommendation,
   adopted,

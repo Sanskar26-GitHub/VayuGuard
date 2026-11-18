@@ -2,10 +2,20 @@ import React from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { ACCESSIBLE_SURFACES } from '../styles/accessibleTheme';
 
-interface NavbarProps {
+/**
+ * Props for {@link Navbar}.
+ */
+export interface NavbarProps {
   onFocusPlanner: () => void;
 }
 
+/**
+ * Sticky single-row top navigation bar featuring an accessible skip link,
+ * VayuGuard brand wordmark, section anchors, and quick-configure CTA.
+ *
+ * @param props - Action callback to focus the household planner input.
+ * @returns Semantic `<header>` navigation bar.
+ */
 export function Navbar({ onFocusPlanner }: NavbarProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-sm">

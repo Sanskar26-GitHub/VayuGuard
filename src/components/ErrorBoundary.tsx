@@ -2,12 +2,21 @@ import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { STATUS_ACCESSIBLE_TOKENS } from '../styles/accessibleTheme';
 
-interface ErrorAlertBannerProps {
+/**
+ * Props for {@link ErrorAlertBanner}.
+ */
+export interface ErrorAlertBannerProps {
   title?: string;
   message: string;
   onDismiss?: () => void;
 }
 
+/**
+ * Accessible high-contrast error alert banner with optional dismiss control.
+ *
+ * @param props - Error title, human-readable message, and optional dismiss handler.
+ * @returns WCAG AA alert banner element.
+ */
 export function ErrorAlertBanner({
   title = 'Unable to complete request',
   message,

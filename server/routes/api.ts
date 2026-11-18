@@ -24,6 +24,7 @@ import {
   generateParametricFallbackPlan,
 } from '../services/fallbackPlanService';
 import { verifyAndGroundRecommendations } from '../services/groundingService';
+import { searchGeocodingLocations } from '../services/geocodingService';
 import {
   sanitizeProfile,
   sanitizeQuestion,
@@ -32,10 +33,8 @@ import {
   truncateText,
   ValidationError,
 } from '../services/sanitizationService';
-import {
-  fetchAirAndWeatherTelemetry,
-  searchGeocodingLocations,
-} from '../services/weatherAirService';
+import { fetchAirAndWeatherTelemetry } from '../services/weatherAirService';
+import { logger } from '../utils/logger';
 
 export const apiRouter = Router();
 
@@ -146,7 +145,9 @@ apiRouter.post('/plan', async (req: Request, res: Response, next: NextFunction) 
           throw new Error('Malformed structured JSON plan from Gemini');
         }
       } catch (aiErr) {
-        console.warn('[VayuGuard] Gemini plan generation fell back:', sanitizeGeminiError(aiErr));
+        logger.warn('Gemini plan generation fell back to parametric engine', {
+          reason: sanitizeGeminiError(aiErr),
+        });
         const fallback = generateParametricFallbackPlan(profile, telemetry);
         dailyBriefing = fallback.dailyBriefing;
         ventilationGuidance = fallback.ventilationGuidance;
@@ -220,7 +221,9 @@ apiRouter.post('/ask', async (req: Request, res: Response, next: NextFunction) =
           return;
         }
       } catch (aiErr) {
-        console.warn('[VayuGuard] Gemini Q&A fell back:', sanitizeGeminiError(aiErr));
+        logger.warn('Gemini Q&A fell back to parametric engine', {
+          reason: sanitizeGeminiError(aiErr),
+        });
       }
     }
 
